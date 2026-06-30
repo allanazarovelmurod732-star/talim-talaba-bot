@@ -1,6 +1,10 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
+
+// Asosiy menyu tepasidagi banner rasm (assets papkasida bo'lishi shart)
+const MAIN_BANNER_PATH = path.join(__dirname, 'assets', 'banner.jpg');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL; // e.g. https://talim-talaba-bot.onrender.com
@@ -268,6 +272,33 @@ async function safeEdit(chatId, messageId, html, keyboard) {
 }
 
 // ---------------------------------------------------------------------------
+// Asosiy menyuni banner rasm bilan yuborish
+// (Telegramda rasmga matnni keyinroq "edit" qilib qo'shib bo'lmaydi, shu sababli
+//  asosiy menyuga qaytilganda eski xabar o'chirilib, yangisi rasm bilan yuboriladi)
+// ---------------------------------------------------------------------------
+async function sendMainMenu(chatId) {
+  const { text, keyboard } = mainMenuScreen();
+  try {
+    await bot.sendPhoto(chatId, MAIN_BANNER_PATH, {
+      caption: text,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+    });
+  } catch (err) {
+    console.error('sendPhoto xatosi (banner), faqat matn yuborilmoqda:', err.message);
+    await safeSend(chatId, text, keyboard);
+  }
+}
+
+async function deleteMessageSafe(chatId, messageId) {
+  try {
+    await bot.deleteMessage(chatId, messageId);
+  } catch (err) {
+    console.error('deleteMessage xatosi:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Handlerlar
 // ---------------------------------------------------------------------------
 bot.onText(/^\/start/, async (msg) => {
@@ -285,8 +316,7 @@ bot.onText(/^\/start/, async (msg) => {
     return;
   }
 
-  const { text, keyboard } = mainMenuScreen();
-  await safeSend(msg.chat.id, text, keyboard);
+  await sendMainMenu(msg.chat.id);
 });
 
 bot.on('callback_query', async (query) => {
@@ -317,8 +347,8 @@ bot.on('callback_query', async (query) => {
     }
 
     if (subscribed) {
-      const { text, keyboard } = mainMenuScreen();
-      await safeEdit(chatId, messageId, text, keyboard);
+      await deleteMessageSafe(chatId, messageId);
+      await sendMainMenu(chatId);
       try {
         await bot.answerCallbackQuery(query.id, { text: '✅ Obuna tasdiqlandi!' });
       } catch (err) {
@@ -366,6 +396,19 @@ bot.on('callback_query', async (query) => {
   }
 
   const { text, keyboard } = screenFn();
+
+  // Asosiy menyuga qaytishda banner rasm bilan qayta yuborish kerak
+  if (query.data === 'menu_back') {
+    await deleteMessageSafe(chatId, messageId);
+    await sendMainMenu(chatId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    return;
+  }
+
   await safeEdit(chatId, messageId, text, keyboard);
 
   try {
