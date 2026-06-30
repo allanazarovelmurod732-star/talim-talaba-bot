@@ -382,8 +382,9 @@ bot.on('callback_query', async (query) => {
   }
 
   if (!subscribed) {
+    await deleteMessageSafe(chatId, messageId);
     const { text, keyboard } = gateScreen();
-    await safeEdit(chatId, messageId, text, keyboard);
+    await safeSend(chatId, text, keyboard);
     try {
       await bot.answerCallbackQuery(query.id, {
         text: "❌ Avval kanallarga obuna bo'ling.",
@@ -397,19 +398,17 @@ bot.on('callback_query', async (query) => {
 
   const { text, keyboard } = screenFn();
 
-  // Asosiy menyuga qaytishda banner rasm bilan qayta yuborish kerak
-  if (query.data === 'menu_back') {
-    await deleteMessageSafe(chatId, messageId);
-    await sendMainMenu(chatId);
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    return;
-  }
+  // Asosiy menyuga qaytishda banner rasm bilan qayta yuborish kerak,
+  // boshqa bo'limlarga o'tishda esa oddiy matnli xabar bilan almashtiramiz.
+  // (Eski xabar rasmli yoki matnli bo'lishi mumkin — shu sababli har doim
+  //  o'chirib, yangi xabar yuboramiz, "edit" orqali emas)
+  await deleteMessageSafe(chatId, messageId);
 
-  await safeEdit(chatId, messageId, text, keyboard);
+  if (query.data === 'menu_back') {
+    await sendMainMenu(chatId);
+  } else {
+    await safeSend(chatId, text, keyboard);
+  }
 
   try {
     await bot.answerCallbackQuery(query.id);
