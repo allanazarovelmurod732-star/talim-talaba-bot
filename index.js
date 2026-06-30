@@ -172,7 +172,8 @@ function founderScreen() {
     { id: EMOJI.clockIcon, placeholder: '🕖' },
     ' 07:00 – 12:00\n',
     { id: EMOJI.clockIcon, placeholder: '🕕' },
-    ' 18:00 – 20:00',
+    ' 18:00 – 20:00\n\n',
+    '📞 Telefon: +998505060717',
   ]);
 
   const keyboard = [
@@ -188,7 +189,7 @@ function founderScreen() {
       }),
     ],
     [
-      btn({ text: 'Telefon', url: 'tel:+998505060717', style: 'primary', icon: EMOJI.phoneIcon }),
+      btn({ text: 'Telefon', callback_data: 'show_phone', style: 'primary', icon: EMOJI.phoneIcon }),
     ],
     backRow,
   ];
@@ -226,6 +227,18 @@ bot.onText(/^\/start/, async (msg) => {
 });
 
 bot.on('callback_query', async (query) => {
+  if (query.data === 'show_phone') {
+    try {
+      await bot.answerCallbackQuery(query.id, {
+        text: '📞 +998505060717\n\nQo\'ng\'iroq qilish uchun xabardagi raqamga bosing.',
+        show_alert: true,
+      });
+    } catch (err) {
+      console.error('show_phone answerCallbackQuery xatosi:', err.message);
+    }
+    return;
+  }
+
   const screenFn = SCREENS[query.data];
   if (!screenFn) {
     try { await bot.answerCallbackQuery(query.id); } catch (err) { console.error('answerCallbackQuery xatosi:', err.message); }
