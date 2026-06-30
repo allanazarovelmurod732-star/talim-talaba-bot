@@ -122,7 +122,7 @@ function gateScreen() {
       text: ch.name,
       url: `https://t.me/${ch.username.replace('@', '')}`,
       icon: ch.icon,
-      style: i % 2 === 0 ? 'primary' : 'success',
+      style: i === 0 ? 'primary' : 'danger',
     }),
   ]);
   keyboard.push([btn({ text: "✅ Tekshirish", callback_data: 'check_subscription', style: 'success' })]);
