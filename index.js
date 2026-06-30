@@ -82,6 +82,19 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
 
 const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back' })];
 
+// Agar premium custom emoji/style ushbu bot hisobida ishlamasa (masalan
+// Telegram Premium yo'qligi yoki noto'g'ri ID sababli), shu funksiya
+// tugmalardan style va icon_custom_emoji_id maydonlarini olib tashlaydi —
+// shunda bot hech bo'lmaganda oddiy ko'rinishda ishlayveradi.
+function stripPremium(keyboard) {
+  return keyboard.map((row) =>
+    row.map((button) => {
+      const { style, icon_custom_emoji_id, ...rest } = button;
+      return rest;
+    })
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Ekranlar (matn + tugmalar)
 // ---------------------------------------------------------------------------
@@ -194,14 +207,21 @@ const SCREENS = {
 // Handlerlar
 // ---------------------------------------------------------------------------
 bot.onText(/^\/start/, async (msg) => {
+  const { text, entities, keyboard } = mainMenuScreen();
   try {
-    const { text, entities, keyboard } = mainMenuScreen();
     await bot.sendMessage(msg.chat.id, text, {
       entities,
       reply_markup: { inline_keyboard: keyboard },
     });
   } catch (err) {
-    console.error('/start xatosi:', err.message);
+    console.error('/start xatosi (premium variant, oddiyga o\'tilmoqda):', err.message);
+    try {
+      await bot.sendMessage(msg.chat.id, text, {
+        reply_markup: { inline_keyboard: stripPremium(keyboard) },
+      });
+    } catch (err2) {
+      console.error('/start xatosi (oddiy variant ham muvaffaqiyatsiz):', err2.message);
+    }
   }
 });
 
@@ -222,9 +242,21 @@ bot.on('callback_query', async (query) => {
       reply_markup: { inline_keyboard: keyboard },
     });
   } catch (err) {
-    // Matn o'zgarmagan bo'lsa Telegram xato qaytaradi — bunda jim o'tkazib yuboramiz
-    if (!String(err.message).includes('message is not modified')) {
-      console.error('editMessageText xatosi:', err.message);
+    if (String(err.message).includes('message is not modified')) {
+      // Matn o'zgarmagan — bu normal holat, jim o'tkazib yuboramiz
+    } else {
+      console.error('editMessageText xatosi (premium variant, oddiyga o\'tilmoqda):', err.message);
+      try {
+        await bot.editMessageText(text, {
+          chat_id: query.message.chat.id,
+          message_id: query.message.message_id,
+          reply_markup: { inline_keyboard: stripPremium(keyboard) },
+        });
+      } catch (err2) {
+        if (!String(err2.message).includes('message is not modified')) {
+          console.error('editMessageText xatosi (oddiy variant ham muvaffaqiyatsiz):', err2.message);
+        }
+      }
     }
   }
 
