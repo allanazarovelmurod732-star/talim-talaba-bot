@@ -44,29 +44,25 @@ const EMOJI = {
 };
 
 // ---------------------------------------------------------------------------
-// Matn ichiga custom emoji joylash uchun yordamchi.
-// segments: string yoki { id, placeholder } obyektlari massivi.
-// Telegram offset/length UTF-16 birliklarida hisoblanadi — bu yerda
-// js String.length aynan shu birlikni qaytaradi, shu sababli to'g'ridan-to'g'ri ishlatamiz.
+// Majburiy obuna bo'lish kerak bo'lgan kanallar
 // ---------------------------------------------------------------------------
-function buildText(segments) {
-  let text = '';
-  const entities = [];
-  for (const seg of segments) {
-    if (typeof seg === 'string') {
-      text += seg;
-    } else {
-      const offset = text.length;
-      text += seg.placeholder;
-      entities.push({
-        type: 'custom_emoji',
-        offset,
-        length: seg.placeholder.length,
-        custom_emoji_id: seg.id,
-      });
-    }
-  }
-  return { text, entities };
+const REQUIRED_CHANNELS = [
+  { name: "Talim Talaba", username: '@talimtalaba', icon: '5451880684945708278' },
+  { name: 'IT kurslar', username: '@it_kurslarr', icon: '5807952667992920776' },
+];
+
+// ---------------------------------------------------------------------------
+// Yordamchilar
+// ---------------------------------------------------------------------------
+
+// Matn ichiga premium custom emoji joylash uchun (HTML parse_mode, tg-emoji tegi)
+function emoji(id, placeholder) {
+  return `<tg-emoji emoji-id="${id}">${placeholder}</tg-emoji>`;
+}
+
+// Agar tg-emoji ID noto'g'ri/ishlamasa, shu funksiya uni oddiy emojiga aylantiradi
+function stripTgEmoji(html) {
+  return html.replace(/<tg-emoji emoji-id="\d+">(.*?)<\/tg-emoji>/g, '$1');
 }
 
 // Tugma qurish yordamchisi (style va icon_custom_emoji_id bilan)
@@ -82,8 +78,7 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
 
 const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back' })];
 
-// Agar premium custom emoji/style ushbu bot hisobida ishlamasa (masalan
-// Telegram Premium yo'qligi yoki noto'g'ri ID sababli), shu funksiya
+// Agar premium custom emoji/style ushbu bot hisobida ishlamasa, shu funksiya
 // tugmalardan style va icon_custom_emoji_id maydonlarini olib tashlaydi —
 // shunda bot hech bo'lmaganda oddiy ko'rinishda ishlayveradi.
 function stripPremium(keyboard) {
@@ -96,16 +91,53 @@ function stripPremium(keyboard) {
 }
 
 // ---------------------------------------------------------------------------
-// Ekranlar (matn + tugmalar)
+// Obuna tekshiruvi
+// ---------------------------------------------------------------------------
+async function isSubscribedToAll(userId) {
+  for (const ch of REQUIRED_CHANNELS) {
+    try {
+      const member = await bot.getChatMember(ch.username, userId);
+      if (['left', 'kicked'].includes(member.status)) return false;
+    } catch (err) {
+      console.error(`getChatMember xatosi (${ch.username}):`, err.message);
+      // Bot kanalda admin bo'lmasa yoki boshqa xato bo'lsa, xavfsizlik uchun "obuna yo'q" deb hisoblaymiz
+      return false;
+    }
+  }
+  return true;
+}
+
+function gateScreen() {
+  const channelLines = REQUIRED_CHANNELS
+    .map((ch) => `${emoji(ch.icon, '📡')} <b>${ch.name}</b>`)
+    .join('\n');
+
+  const text =
+    `🔒 <b>Botdan foydalanish uchun</b> quyidagi kanal(lar)ga obuna bo'ling:\n\n` +
+    `${channelLines}\n\n` +
+    `<i>Obuna bo'lgach, pastdagi "Tekshirish" tugmasini bosing.</i>`;
+
+  const keyboard = REQUIRED_CHANNELS.map((ch, i) => [
+    btn({
+      text: ch.name,
+      url: `https://t.me/${ch.username.replace('@', '')}`,
+      icon: ch.icon,
+      style: i % 2 === 0 ? 'primary' : 'success',
+    }),
+  ]);
+  keyboard.push([btn({ text: "✅ Tekshirish", callback_data: 'check_subscription', style: 'success' })]);
+
+  return { text, keyboard };
+}
+
+// ---------------------------------------------------------------------------
+// Ekranlar (matn + tugmalar) — HTML formatlash (qalin/qiya) bilan
 // ---------------------------------------------------------------------------
 function mainMenuScreen() {
-  const { text, entities } = buildText([
-    '🎓 ',
-    "Ta'lim Talaba",
-    " botiga xush kelibsiz!\n\n",
-    "Bu yerda siz ta'lim sohasidagi eng so'nggi yangiliklar, foydali test platformalari va bot haqida ma'lumotlarni topasiz.\n\n",
-    'Quyidagi bo\'limlardan birini tanlang 👇',
-  ]);
+  const text =
+    `🎓 <b>Ta'lim Talaba</b> botiga xush kelibsiz!\n\n` +
+    `Bu yerda siz <b>ta'lim sohasidagi</b> eng so'nggi yangiliklar, foydali test platformalari va bot haqida ma'lumotlarni topasiz.\n\n` +
+    `<i>Quyidagi bo'limlardan birini tanlang</i> 👇`;
 
   const keyboard = [
     [btn({ text: "Ta'lim kanalimiz", callback_data: 'menu_channel', icon: EMOJI.channelMenuIcon, style: 'primary' })],
@@ -115,37 +147,31 @@ function mainMenuScreen() {
 
   if (MINI_APP_URL) {
     keyboard.push([
-      btn({
-        text: 'Mini ilovani ochish',
-        web_app: { url: MINI_APP_URL },
-        style: 'primary',
-      }),
+      btn({ text: 'Mini ilovani ochish', web_app: { url: MINI_APP_URL }, style: 'primary' }),
     ]);
   }
 
-  return { text, entities, keyboard };
+  return { text, keyboard };
 }
 
 function channelScreen() {
-  const { text, entities } = buildText([
-    { id: EMOJI.channelBodyIcon, placeholder: '📡' },
-    " Ta'lim Talaba — siz qidirayotgan yangi kanallardan biri! U hozirda barcha universitetlar haqida eng so'nggi ma'lumotlarni berib kelmoqda.\n\n",
-    "Siz ham talaba bo'lmoqchi bo'lsangiz, unda ushbu bottan tezroq foydalaning!",
-  ]);
+  const text =
+    `${emoji(EMOJI.channelBodyIcon, '📡')} <b>Ta'lim Talaba</b> — siz qidirayotgan yangi kanallardan biri! ` +
+    `U hozirda <b>barcha universitetlar</b> haqida eng so'nggi ma'lumotlarni berib kelmoqda.\n\n` +
+    `<i>Siz ham talaba bo'lmoqchi bo'lsangiz, unda ushbu bottan tezroq foydalaning!</i>`;
 
   const keyboard = [
     [btn({ text: 'Talaba', url: 'https://t.me/talimtalaba', style: 'primary', icon: EMOJI.channelButtonIcon })],
     backRow,
   ];
 
-  return { text, entities, keyboard };
+  return { text, keyboard };
 }
 
 function testScreen() {
-  const { text, entities } = buildText([
-    { id: EMOJI.testBodyIcon, placeholder: '📝' },
-    ' Barcha turdagi test dasturlari shu yerda! Yangilik — DTM test. Siz ushbu bo\'lim orqali bemalol milliy sertifikatingizni ishlatishingiz mumkin.',
-  ]);
+  const text =
+    `${emoji(EMOJI.testBodyIcon, '📝')} <b>Barcha turdagi test dasturlari</b> shu yerda! Yangilik — <b>DTM test</b>. ` +
+    `Siz ushbu bo'lim orqali bemalol <i>milliy sertifikatingizni</i> ishlatishingiz mumkin.`;
 
   const keyboard = [
     [
@@ -159,27 +185,21 @@ function testScreen() {
     backRow,
   ];
 
-  return { text, entities, keyboard };
+  return { text, keyboard };
 }
 
 function founderScreen() {
-  const { text, entities } = buildText([
-    '👤 Elmurod Allanazarov\n\n',
-    "Mana shu botimiz asoschisi va dasturchisi (developeri). U 2007-yil 17-noyabrda Qashqadaryo viloyati, Kasbi tumanida tug'ilgan.\n\n",
-    { id: EMOJI.receptionIcon, placeholder: '📅' },
-    ' Qabul vaqti:\n',
-    'Dushanba – Shanba\n',
-    { id: EMOJI.clockIcon, placeholder: '🕖' },
-    ' 07:00 – 12:00\n',
-    { id: EMOJI.clockIcon, placeholder: '🕕' },
-    ' 18:00 – 20:00\n\n',
-    '📞 Telefon: +998505060717',
-  ]);
+  const text =
+    `👤 <b>Elmurod Allanazarov</b>\n\n` +
+    `Mana shu botimiz <b>asoschisi va dasturchisi</b> (developeri). U <i>2007-yil 17-noyabrda</i> Qashqadaryo viloyati, Kasbi tumanida tug'ilgan.\n\n` +
+    `${emoji(EMOJI.receptionIcon, '📅')} <b>Qabul vaqti:</b>\n` +
+    `Dushanba – Shanba\n` +
+    `${emoji(EMOJI.clockIcon, '🕖')} 07:00 – 12:00\n` +
+    `${emoji(EMOJI.clockIcon, '🕕')} 18:00 – 20:00\n\n` +
+    `📞 <b>Telefon:</b> +998505060717`;
 
   const keyboard = [
-    [
-      btn({ text: 'Telegram', url: 'https://t.me/elmurodallanazarov', style: 'success', icon: EMOJI.telegramIcon }),
-    ],
+    [btn({ text: 'Telegram', url: 'https://t.me/elmurodallanazarov', style: 'success', icon: EMOJI.telegramIcon })],
     [
       btn({
         text: 'Instagram',
@@ -188,13 +208,11 @@ function founderScreen() {
         icon: EMOJI.instagramIcon,
       }),
     ],
-    [
-      btn({ text: 'Telefon', callback_data: 'show_phone', style: 'primary', icon: EMOJI.phoneIcon }),
-    ],
+    [btn({ text: 'Telefon', callback_data: 'show_phone', style: 'primary', icon: EMOJI.phoneIcon })],
     backRow,
   ];
 
-  return { text, entities, keyboard };
+  return { text, keyboard };
 }
 
 const SCREENS = {
@@ -205,28 +223,78 @@ const SCREENS = {
 };
 
 // ---------------------------------------------------------------------------
-// Handlerlar
+// Xavfsiz yuborish/tahrirlash — premium ishlamasa, oddiyga zaxira (fallback)
 // ---------------------------------------------------------------------------
-bot.onText(/^\/start/, async (msg) => {
-  const { text, entities, keyboard } = mainMenuScreen();
+async function safeSend(chatId, html, keyboard) {
   try {
-    await bot.sendMessage(msg.chat.id, text, {
-      entities,
-      reply_markup: { inline_keyboard: keyboard },
-    });
+    await bot.sendMessage(chatId, html, { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
   } catch (err) {
-    console.error('/start xatosi (premium variant, oddiyga o\'tilmoqda):', err.message);
+    console.error('sendMessage xatosi (premium), oddiyga o\'tilmoqda:', err.message);
     try {
-      await bot.sendMessage(msg.chat.id, text, {
+      await bot.sendMessage(chatId, stripTgEmoji(html), {
+        parse_mode: 'HTML',
         reply_markup: { inline_keyboard: stripPremium(keyboard) },
       });
     } catch (err2) {
-      console.error('/start xatosi (oddiy variant ham muvaffaqiyatsiz):', err2.message);
+      console.error('sendMessage xatosi (oddiy ham muvaffaqiyatsiz):', err2.message);
     }
   }
+}
+
+async function safeEdit(chatId, messageId, html, keyboard) {
+  try {
+    await bot.editMessageText(html, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+    });
+  } catch (err) {
+    if (String(err.message).includes('message is not modified')) return;
+    console.error('editMessageText xatosi (premium), oddiyga o\'tilmoqda:', err.message);
+    try {
+      await bot.editMessageText(stripTgEmoji(html), {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: stripPremium(keyboard) },
+      });
+    } catch (err2) {
+      if (!String(err2.message).includes('message is not modified')) {
+        console.error('editMessageText xatosi (oddiy ham muvaffaqiyatsiz):', err2.message);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Handlerlar
+// ---------------------------------------------------------------------------
+bot.onText(/^\/start/, async (msg) => {
+  const userId = msg.from.id;
+  let subscribed = true;
+  try {
+    subscribed = await isSubscribedToAll(userId);
+  } catch (err) {
+    console.error('/start obuna tekshiruvi xatosi:', err.message);
+  }
+
+  if (!subscribed) {
+    const { text, keyboard } = gateScreen();
+    await safeSend(msg.chat.id, text, keyboard);
+    return;
+  }
+
+  const { text, keyboard } = mainMenuScreen();
+  await safeSend(msg.chat.id, text, keyboard);
 });
 
 bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  const userId = query.from.id;
+
+  // Telefon raqamini ko'rsatish
   if (query.data === 'show_phone') {
     try {
       await bot.answerCallbackQuery(query.id, {
@@ -239,39 +307,66 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // Obunani qayta tekshirish
+  if (query.data === 'check_subscription') {
+    let subscribed = false;
+    try {
+      subscribed = await isSubscribedToAll(userId);
+    } catch (err) {
+      console.error('check_subscription xatosi:', err.message);
+    }
+
+    if (subscribed) {
+      const { text, keyboard } = mainMenuScreen();
+      await safeEdit(chatId, messageId, text, keyboard);
+      try {
+        await bot.answerCallbackQuery(query.id, { text: '✅ Obuna tasdiqlandi!' });
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+    } else {
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: "❌ Siz hali barcha kanallarga obuna bo'lmagansiz. Iltimos, avval obuna bo'ling.",
+          show_alert: true,
+        });
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+    }
+    return;
+  }
+
   const screenFn = SCREENS[query.data];
   if (!screenFn) {
     try { await bot.answerCallbackQuery(query.id); } catch (err) { console.error('answerCallbackQuery xatosi:', err.message); }
     return;
   }
 
-  const { text, entities, keyboard } = screenFn();
-
+  // Menyu bo'limlariga kirishdan oldin ham obunani tekshiramiz
+  let subscribed = true;
   try {
-    await bot.editMessageText(text, {
-      chat_id: query.message.chat.id,
-      message_id: query.message.message_id,
-      entities,
-      reply_markup: { inline_keyboard: keyboard },
-    });
+    subscribed = await isSubscribedToAll(userId);
   } catch (err) {
-    if (String(err.message).includes('message is not modified')) {
-      // Matn o'zgarmagan — bu normal holat, jim o'tkazib yuboramiz
-    } else {
-      console.error('editMessageText xatosi (premium variant, oddiyga o\'tilmoqda):', err.message);
-      try {
-        await bot.editMessageText(text, {
-          chat_id: query.message.chat.id,
-          message_id: query.message.message_id,
-          reply_markup: { inline_keyboard: stripPremium(keyboard) },
-        });
-      } catch (err2) {
-        if (!String(err2.message).includes('message is not modified')) {
-          console.error('editMessageText xatosi (oddiy variant ham muvaffaqiyatsiz):', err2.message);
-        }
-      }
-    }
+    console.error('menyu obuna tekshiruvi xatosi:', err.message);
   }
+
+  if (!subscribed) {
+    const { text, keyboard } = gateScreen();
+    await safeEdit(chatId, messageId, text, keyboard);
+    try {
+      await bot.answerCallbackQuery(query.id, {
+        text: "❌ Avval kanallarga obuna bo'ling.",
+        show_alert: true,
+      });
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    return;
+  }
+
+  const { text, keyboard } = screenFn();
+  await safeEdit(chatId, messageId, text, keyboard);
 
   try {
     await bot.answerCallbackQuery(query.id);
