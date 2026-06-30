@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Ta'lim Talaba</title>
+<meta name="description" content="Ta'lim Talaba — ta'lim sohasidagi eng so'nggi yangiliklar va test platformasi" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #11193A;
+    --bg-soft: #18224C;
+    --bg-grid: rgba(201,162,75,0.06);
+    --paper: #F7F2E4;
+    --paper-2: #EFE7D2;
+    --ink: #1E1B14;
+    --ink-soft: #5B5747;
+    --on-dark: #E9E6F5;
+    --on-dark-muted: #9098C2;
+    --gold: #C9A24B;
+    --gold-bright: #E8C873;
+    --primary: #3B6FE0;
+    --primary-ink: #ffffff;
+    --success: #2FAE66;
+    --success-ink: #ffffff;
+    --danger: #E0473B;
+    --danger-ink: #ffffff;
+    --radius-lg: 22px;
+    --radius-md: 14px;
+    --container: 480px;
+    --shadow: 0 18px 40px -18px rgba(8, 12, 35, 0.55);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--on-dark);
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 18% -8%, rgba(232, 200, 115, 0.16), transparent 42%),
+      radial-gradient(circle at 100% 0%, rgba(59, 111, 224, 0.18), transparent 38%),
+      repeating-linear-gradient(0deg, var(--bg-grid) 0px, var(--bg-grid) 1px, transparent 1px, transparent 28px),
+      var(--bg);
+    padding: 28px 18px 48px;
+  }
+
+  .wrap {
+    max-width: var(--container);
+    margin: 0 auto;
+  }
+
+  /* ---------------- Hero ---------------- */
+  .hero {
+    position: relative;
+    padding: 6px 4px 30px;
+    opacity: 0;
+    transform: translateY(10px);
+    animation: rise 0.6s ease forwards;
+  }
+
+  .eyebrow {
+    font-family: 'Space Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gold-bright);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .eyebrow::before {
+    content: "";
+    width: 18px;
+    height: 1px;
+    background: var(--gold-bright);
+    opacity: 0.7;
+  }
+
+  .hero-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .hero h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 34px;
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    color: var(--on-dark);
+  }
+
+  .hero h1 em {
+    font-style: italic;
+    color: var(--gold-bright);
+  }
+
+  .hero p {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--on-dark-muted);
+    max-width: 36ch;
+  }
+
+  .seal {
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+    transform: rotate(8deg);
+    filter: drop-shadow(0 6px 14px rgba(0,0,0,0.35));
+  }
+
+  /* ---------------- Ticket cards ---------------- */
+  .ticket {
+    position: relative;
+    display: grid;
+    grid-template-columns: 78px 1fr;
+    background: var(--paper);
+    color: var(--ink);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    margin-bottom: 18px;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(14px);
+    animation: rise 0.6s ease forwards;
+  }
+
+  .ticket:nth-of-type(1) { animation-delay: 0.08s; }
+  .ticket:nth-of-type(2) { animation-delay: 0.16s; }
+  .ticket:nth-of-type(3) { animation-delay: 0.24s; }
+
+  .ticket-stub {
+    position: relative;
+    background: var(--paper-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px 0;
+  }
+
+  .ticket-stub::after {
+    content: "";
+    position: absolute;
+    top: 0; right: -1px; bottom: 0;
+    width: 0;
+    border-right: 2px dashed rgba(30,27,20,0.18);
+  }
+
+  .ticket-stub::before {
+    content: "";
+    position: absolute;
+    right: -9px; top: -9px;
+    width: 18px; height: 18px;
+    background: var(--bg);
+    border-radius: 50%;
+  }
+
+  .ticket-stub .punch-bottom {
+    position: absolute;
+    right: -9px; bottom: -9px;
+    width: 18px; height: 18px;
+    background: var(--bg);
+    border-radius: 50%;
+  }
+
+  .stub-icon {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+  }
+
+  .ticket-body {
+    padding: 18px 18px 18px 16px;
+  }
+
+  .ticket-code {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  .ticket h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 19px;
+    margin: 0 0 8px;
+    color: var(--ink);
+  }
+
+  .ticket p {
+    margin: 0 0 14px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+  }
+
+  .action {
+    appearance: none;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    font-family: 'Manrope', sans-serif;
+    font-weight: 700;
+    font-size: 13.5px;
+    padding: 10px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: transform 0.15s ease, filter 0.15s ease;
+  }
+
+  .action:active { transform: scale(0.96); }
+
+  .action--primary { background: var(--primary); color: var(--primary-ink); }
+  .action--success { background: var(--success); color: var(--success-ink); }
+  .action--danger  { background: var(--danger);  color: var(--danger-ink); }
+
+  /* ---------------- Founder card ---------------- */
+  .founder {
+    grid-template-columns: 1fr;
+  }
+
+  .founder .ticket-body { padding: 20px 18px; }
+
+  .founder-top {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  .avatar {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    background: linear-gradient(150deg, var(--gold-bright), var(--gold));
+    color: #2A2110;
+    font-family: 'Fraunces', serif;
+    font-weight: 700;
+    font-size: 19px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 3px var(--paper), 0 0 0 4.5px rgba(201,162,75,0.5);
+  }
+
+  .schedule {
+    list-style: none;
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    background: var(--paper-2);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+
+  .schedule li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+
+  .schedule li b { color: var(--ink); font-weight: 700; }
+
+  .link-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .chip {
+    flex: 1 1 auto;
+    text-align: center;
+    justify-content: center;
+  }
+
+  /* ---------------- Footer ---------------- */
+  .footer {
+    text-align: center;
+    margin-top: 26px;
+    opacity: 0;
+    animation: rise 0.6s ease forwards;
+    animation-delay: 0.32s;
+  }
+
+  .footer-btn {
+    display: inline-block;
+    background: transparent;
+    border: 1px solid rgba(233,230,245,0.18);
+    color: var(--on-dark-muted);
+    font-size: 12.5px;
+    font-family: 'Manrope', sans-serif;
+    font-weight: 600;
+    padding: 10px 20px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  .footer small {
+    display: block;
+    margin-top: 14px;
+    font-size: 11px;
+    color: rgba(144,152,194,0.6);
+    font-family: 'Space Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+
+  @keyframes rise {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero, .ticket, .footer {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <header class="hero">
+      <div class="eyebrow">Ta'lim Talaba · Bot</div>
+      <div class="hero-row">
+        <div>
+          <h1>Ta'lim olish<br><em>yo'lidagi</em> hamrohingiz</h1>
+          <p>Universitetlar, qabul jarayonlari va test platformalari haqida eng so'nggi ma'lumotlar — bir joyda.</p>
+        </div>
+        <svg class="seal" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="32" cy="32" r="31" stroke="#E8C873" stroke-width="1.4" stroke-dasharray="2.4 3.2"/>
+          <circle cx="32" cy="32" r="24" fill="#1B2452" stroke="#C9A24B" stroke-width="1.2"/>
+          <path d="M32 20L46 26.5L32 33L18 26.5L32 20Z" fill="#E8C873"/>
+          <path d="M22 29V37C22 37 25 41 32 41C39 41 42 37 42 37V29" stroke="#E8C873" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </header>
+
+    <!-- 1. Ta'lim kanalimiz -->
+    <section class="ticket">
+      <div class="ticket-stub">
+        <div class="punch-bottom"></div>
+        <div class="stub-icon">📡</div>
+      </div>
+      <div class="ticket-body">
+        <span class="ticket-code">Bo'lim · 01</span>
+        <h2>Ta'lim kanalimiz</h2>
+        <p>Ta'lim Talaba — siz qidirayotgan yangi kanallardan biri! U hozirda barcha universitetlar haqida eng so'nggi ma'lumotlarni berib kelmoqda. Siz ham talaba bo'lmoqchi bo'lsangiz, ushbu bottan tezroq foydalaning!</p>
+        <a class="action action--primary" href="https://t.me/talimtalaba" target="_blank" rel="noopener">🎓 Talaba</a>
+      </div>
+    </section>
+
+    <!-- 2. Test platformamiz -->
+    <section class="ticket">
+      <div class="ticket-stub">
+        <div class="punch-bottom"></div>
+        <div class="stub-icon">📝</div>
+      </div>
+      <div class="ticket-body">
+        <span class="ticket-code">Bo'lim · 02</span>
+        <h2>Test Platformamiz</h2>
+        <p>Barcha turdagi test dasturlari shu yerda! Yangilik — DTM test. Ushbu bo'lim orqali bemalol milliy sertifikatingizni ishlatishingiz mumkin.</p>
+        <a class="action action--success" href="https://play.google.com/store/apps/details?id=app.netlify.eloquent_khapse_99d13b.twa&pcampaignid=web_share" target="_blank" rel="noopener">⬇️ Yuklab olish</a>
+      </div>
+    </section>
+
+    <!-- 3. Founder -->
+    <section class="ticket founder">
+      <div class="ticket-body">
+        <span class="ticket-code">Bo'lim · 03</span>
+        <div class="founder-top">
+          <div class="avatar">EA</div>
+          <div>
+            <h2 style="margin-bottom:2px;">Elmurod Allanazarov</h2>
+            <p style="margin:0; font-size:12.5px;">Bot asoschisi va dasturchisi</p>
+          </div>
+        </div>
+        <p>2007-yil 17-noyabrda Qashqadaryo viloyati, Kasbi tumanida tug'ilgan.</p>
+        <ul class="schedule">
+          <li>📅 <b>Qabul vaqti:</b>&nbsp;Dushanba – Shanba</li>
+          <li>🕖 <b>07:00 – 12:00</b></li>
+          <li>🕕 <b>18:00 – 20:00</b></li>
+        </ul>
+        <div class="link-row">
+          <a class="action action--success chip" href="https://t.me/elmurodallanazarov" target="_blank" rel="noopener">Telegram</a>
+          <a class="action action--danger chip" href="https://www.instagram.com/elmurodallanazarov?utm_source=qr&igsh=MWF0dWtpMDRmbTlpMA==" target="_blank" rel="noopener">Instagram</a>
+          <a class="action action--primary chip" href="tel:+998505060717">Telefon</a>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <button class="footer-btn" id="closeBtn">Botga qaytish</button>
+      <small>TA'LIM TALABA © 2026</small>
+    </footer>
+
+  </div>
+
+<script>
+  (function () {
+    var tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      try {
+        tg.setHeaderColor('#11193A');
+        tg.setBackgroundColor('#11193A');
+      } catch (e) { /* eski klient bo'lishi mumkin, e'tiborsiz qoldiramiz */ }
+    }
+
+    var closeBtn = document.getElementById('closeBtn');
+    closeBtn.addEventListener('click', function () {
+      if (tg) {
+        tg.close();
+      } else {
+        window.history.back();
+      }
+    });
+  })();
+</script>
+</body>
+</html>
