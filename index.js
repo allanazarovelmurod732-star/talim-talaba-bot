@@ -276,17 +276,20 @@ async function safeEdit(chatId, messageId, html, keyboard) {
 // (Telegramda rasmga matnni keyinroq "edit" qilib qo'shib bo'lmaydi, shu sababli
 //  asosiy menyuga qaytilganda eski xabar o'chirilib, yangisi rasm bilan yuboriladi)
 // ---------------------------------------------------------------------------
-async function sendMainMenu(chatId) {
+async function sendMainMenu(chatId, isGroup = false) {
   const { text, keyboard } = mainMenuScreen();
+  // Guruhda premium tugmalar (style, icon) ishlamaydi — oddiy ko'rinishga o'tkazamiz
+  const finalKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+  const finalText = isGroup ? stripTgEmoji(text) : text;
   try {
     await bot.sendPhoto(chatId, MAIN_BANNER_PATH, {
-      caption: text,
+      caption: finalText,
       parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: keyboard },
+      reply_markup: { inline_keyboard: finalKeyboard },
     });
   } catch (err) {
     console.error('sendPhoto xatosi (banner), faqat matn yuborilmoqda:', err.message);
-    await safeSend(chatId, text, keyboard);
+    await safeSend(chatId, finalText, finalKeyboard);
   }
 }
 
@@ -307,7 +310,7 @@ bot.onText(/^\/start/, async (msg) => {
 
   // Guruhda /start bosilsa — obuna tekshiruvisiz asosiy menyuni ko'rsatamiz
   if (chatType === 'group' || chatType === 'supergroup') {
-    await sendMainMenu(msg.chat.id);
+    await sendMainMenu(msg.chat.id, true);
     return;
   }
 
@@ -332,6 +335,7 @@ bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const messageId = query.message.message_id;
   const userId = query.from.id;
+  const isGroup = ['group', 'supergroup'].includes(query.message.chat.type);
 
   // Telefon raqamini ko'rsatish
   if (query.data === 'show_phone') {
@@ -414,9 +418,11 @@ bot.on('callback_query', async (query) => {
   await deleteMessageSafe(chatId, messageId);
 
   if (query.data === 'menu_back') {
-    await sendMainMenu(chatId);
+    await sendMainMenu(chatId, isGroup);
   } else {
-    await safeSend(chatId, text, keyboard);
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await safeSend(chatId, outText, outKeyboard);
   }
 
   try {
