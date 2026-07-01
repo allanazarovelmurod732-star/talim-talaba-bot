@@ -389,7 +389,12 @@ bot.on('message', async (msg) => {
     );
 
     const userText = msg.text.replace(`@${botUsername}`, '').trim();
-    const aiReply = await askGroq(userText);
+
+    // AI javob va 4 soniya kutishni parallel ishlatamiz
+    const [aiReply] = await Promise.all([
+      askGroq(userText),
+      new Promise(resolve => setTimeout(resolve, 4000)), // kamida 4s kutish
+    ]);
 
     // "O'ylamoqda..." xabarini AI javobi bilan almashtiramiz
     await bot.editMessageText(aiReply, {
