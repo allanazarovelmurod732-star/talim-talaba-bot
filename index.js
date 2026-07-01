@@ -86,12 +86,18 @@ const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back' })];
 // tugmalardan style va icon_custom_emoji_id maydonlarini olib tashlaydi —
 // shunda bot hech bo'lmaganda oddiy ko'rinishda ishlayveradi.
 function stripPremium(keyboard) {
-  return keyboard.map((row) =>
-    row.map((button) => {
-      const { style, icon_custom_emoji_id, ...rest } = button;
-      return rest;
-    })
-  );
+  return keyboard
+    .map((row) =>
+      row
+        // web_app tugmalari guruhda ishlamaydi — olib tashlaymiz
+        .filter((button) => !button.web_app)
+        .map((button) => {
+          const { style, icon_custom_emoji_id, ...rest } = button;
+          return rest;
+        })
+    )
+    // Bo'sh qatorlarni olib tashlaymiz
+    .filter((row) => row.length > 0);
 }
 
 // ---------------------------------------------------------------------------
