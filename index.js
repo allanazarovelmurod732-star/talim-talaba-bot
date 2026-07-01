@@ -2,23 +2,54 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
+const Groq = require('groq-sdk');
 
 // Asosiy menyu tepasidagi banner rasm (assets papkasida bo'lishi shart)
 const MAIN_BANNER_PATH = path.join(__dirname, 'assets', 'banner.jpg');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // e.g. https://talim-talaba-bot.onrender.com
-const MINI_APP_URL = process.env.MINI_APP_URL || ''; // mini app (index.html) joylashgan https manzil
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const MINI_APP_URL = process.env.MINI_APP_URL || '';
 const PORT = process.env.PORT || 3000;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 
 if (!BOT_TOKEN) {
-  console.error('XATOLIK: BOT_TOKEN environment o\'zgaruvchisi topilmadi (.env faylga qarang).');
+  console.error("XATOLIK: BOT_TOKEN environment o'zgaruvchisi topilmadi (.env faylga qarang).");
   process.exit(1);
 }
 
 const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: false } });
 
-// Bitta kutilmagan xatolik butun serverni yiqitib qo'ymasligi uchun himoya
+// ---------------------------------------------------------------------------
+// Groq AI client
+// ---------------------------------------------------------------------------
+const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
+
+async function askGroq(userMessage) {
+  if (!groq) return "AI hozircha ulanmagan.";
+  try {
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        {
+          role: 'system',
+          content: "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. Ta'lim, universitetlar, testlar va o'qish haqidagi savollarga ustuvorlik ber.",
+        },
+        { role: 'user', content: userMessage },
+      ],
+      max_tokens: 1024,
+      temperature: 0.7,
+    });
+    return response.choices[0]?.message?.content || "Javob ololmadim.";
+  } catch (err) {
+    console.error('Groq xatosi:', err.message);
+    return "AI javob bera olmadi. Keyinroq urinib ko'ring.";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Xatolik himoyasi
+// ---------------------------------------------------------------------------
 process.on('unhandledRejection', (err) => {
   console.error('Kutilmagan promise xatosi:', err && err.message ? err.message : err);
 });
@@ -27,28 +58,25 @@ process.on('uncaughtException', (err) => {
 });
 
 // ---------------------------------------------------------------------------
-// Custom premium emoji identifikatorlari (Bot API 9.4: style + icon_custom_emoji_id)
+// Custom premium emoji identifikatorlari
 // ---------------------------------------------------------------------------
 const EMOJI = {
   channelMenuIcon: '5451880684945708278',
   channelBodyIcon: '5447183459602669338',
   channelButtonIcon: '5472411062412254753',
-
   testMenuIcon: '5206186681346039457',
   testBodyIcon: '5397879236499353888',
   testButtonIcon: '5373130604147654226',
-
   founderMenuIcon: '5431650332419563627',
   receptionIcon: '5208573502046610594',
   clockIcon: '5260463209562776385',
-
   telegramIcon: '5231489647946768652',
   instagramIcon: '5231051793210810793',
   phoneIcon: '5318765591014678496',
 };
 
 // ---------------------------------------------------------------------------
-// Majburiy obuna bo'lish kerak bo'lgan kanallar
+// Majburiy obuna kanallar
 // ---------------------------------------------------------------------------
 const REQUIRED_CHANNELS = [
   { name: "Talim Talaba", username: '@talimtalaba', icon: '5451880684945708278' },
@@ -58,45 +86,36 @@ const REQUIRED_CHANNELS = [
 // ---------------------------------------------------------------------------
 // Yordamchilar
 // ---------------------------------------------------------------------------
-
-// Matn ichiga premium custom emoji joylash uchun (HTML parse_mode, tg-emoji tegi)
 function emoji(id, placeholder) {
   return `<tg-emoji emoji-id="${id}">${placeholder}</tg-emoji>`;
 }
 
-// Agar tg-emoji ID noto'g'ri/ishlamasa, shu funksiya uni oddiy emojiga aylantiradi
 function stripTgEmoji(html) {
   return html.replace(/<tg-emoji emoji-id="\d+">(.*?)<\/tg-emoji>/g, '$1');
 }
 
-// Tugma qurish yordamchisi (style va icon_custom_emoji_id bilan)
 function btn({ text, callback_data, url, web_app, style, icon }) {
   const button = { text };
   if (callback_data) button.callback_data = callback_data;
   if (url) button.url = url;
   if (web_app) button.web_app = web_app;
-  if (style) button.style = style; // 'danger' | 'success' | 'primary'
+  if (style) button.style = style;
   if (icon) button.icon_custom_emoji_id = icon;
   return button;
 }
 
 const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back' })];
 
-// Agar premium custom emoji/style ushbu bot hisobida ishlamasa, shu funksiya
-// tugmalardan style va icon_custom_emoji_id maydonlarini olib tashlaydi —
-// shunda bot hech bo'lmaganda oddiy ko'rinishda ishlayveradi.
 function stripPremium(keyboard) {
   return keyboard
     .map((row) =>
       row
-        // web_app tugmalari guruhda ishlamaydi — olib tashlaymiz
         .filter((button) => !button.web_app)
         .map((button) => {
           const { style, icon_custom_emoji_id, ...rest } = button;
           return rest;
         })
     )
-    // Bo'sh qatorlarni olib tashlaymiz
     .filter((row) => row.length > 0);
 }
 
@@ -110,7 +129,6 @@ async function isSubscribedToAll(userId) {
       if (['left', 'kicked'].includes(member.status)) return false;
     } catch (err) {
       console.error(`getChatMember xatosi (${ch.username}):`, err.message);
-      // Bot kanalda admin bo'lmasa yoki boshqa xato bo'lsa, xavfsizlik uchun "obuna yo'q" deb hisoblaymiz
       return false;
     }
   }
@@ -141,13 +159,13 @@ function gateScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Ekranlar (matn + tugmalar) — HTML formatlash (qalin/qiya) bilan
+// Ekranlar
 // ---------------------------------------------------------------------------
 function mainMenuScreen() {
   const text =
     `🎓 <b>Ta'lim Talaba</b> botiga xush kelibsiz!\n\n` +
     `Bu yerda siz <b>ta'lim sohasidagi</b> eng so'nggi yangiliklar, foydali test platformalari va bot haqida ma'lumotlarni topasiz.\n\n` +
-    `<i>Quyidagi bo'limlardan birini tanlang</i> 👇`;
+    `<i>Quyidagi bo'limlardan birini tanlang yoki savol yozing</i> 👇`;
 
   const keyboard = [
     [btn({ text: "Ta'lim kanalimiz", callback_data: 'menu_channel', icon: EMOJI.channelMenuIcon, style: 'primary' })],
@@ -233,13 +251,13 @@ const SCREENS = {
 };
 
 // ---------------------------------------------------------------------------
-// Xavfsiz yuborish/tahrirlash — premium ishlamasa, oddiyga zaxira (fallback)
+// Xavfsiz yuborish/tahrirlash
 // ---------------------------------------------------------------------------
 async function safeSend(chatId, html, keyboard) {
   try {
     await bot.sendMessage(chatId, html, { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
   } catch (err) {
-    console.error('sendMessage xatosi (premium), oddiyga o\'tilmoqda:', err.message);
+    console.error("sendMessage xatosi (premium), oddiyga o'tilmoqda:", err.message);
     try {
       await bot.sendMessage(chatId, stripTgEmoji(html), {
         parse_mode: 'HTML',
@@ -261,7 +279,7 @@ async function safeEdit(chatId, messageId, html, keyboard) {
     });
   } catch (err) {
     if (String(err.message).includes('message is not modified')) return;
-    console.error('editMessageText xatosi (premium), oddiyga o\'tilmoqda:', err.message);
+    console.error("editMessageText xatosi (premium), oddiyga o'tilmoqda:", err.message);
     try {
       await bot.editMessageText(stripTgEmoji(html), {
         chat_id: chatId,
@@ -277,14 +295,8 @@ async function safeEdit(chatId, messageId, html, keyboard) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Asosiy menyuni banner rasm bilan yuborish
-// (Telegramda rasmga matnni keyinroq "edit" qilib qo'shib bo'lmaydi, shu sababli
-//  asosiy menyuga qaytilganda eski xabar o'chirilib, yangisi rasm bilan yuboriladi)
-// ---------------------------------------------------------------------------
 async function sendMainMenu(chatId, isGroup = false) {
   const { text, keyboard } = mainMenuScreen();
-  // Guruhda premium tugmalar (style, icon) ishlamaydi — oddiy ko'rinishga o'tkazamiz
   const finalKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
   const finalText = isGroup ? stripTgEmoji(text) : text;
   try {
@@ -314,7 +326,7 @@ bot.onText(/^\/start/, async (msg) => {
   const userId = msg.from.id;
   const chatType = msg.chat.type;
 
-  // Guruhda /start bosilsa — obuna tekshiruvisiz asosiy menyuni ko'rsatamiz
+  // Guruhda — obuna tekshiruvisiz, premium-siz
   if (chatType === 'group' || chatType === 'supergroup') {
     await sendMainMenu(msg.chat.id, true);
     return;
@@ -337,6 +349,59 @@ bot.onText(/^\/start/, async (msg) => {
   await sendMainMenu(msg.chat.id);
 });
 
+// ---------------------------------------------------------------------------
+// AI: Oddiy matnli xabarlarni Groq orqali javoblash
+// (Shaxsiy chatda: barcha matnlar; Guruhda: faqat bot username bilan yoki reply)
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  // Buyruqlarni o'tkazib yuboramiz
+  if (!msg.text || msg.text.startsWith('/')) return;
+
+  const chatType = msg.chat.type;
+  const botUsername = (await bot.getMe()).username;
+
+  // Guruhda faqat @mention yoki reply bo'lsa javob beramiz
+  if (chatType === 'group' || chatType === 'supergroup') {
+    const isMentioned = msg.text.includes(`@${botUsername}`);
+    const isReply = msg.reply_to_message?.from?.username === botUsername;
+    if (!isMentioned && !isReply) return;
+  }
+
+  // Shaxsiy chatda obuna tekshiruvi
+  if (chatType === 'private') {
+    let subscribed = true;
+    try {
+      subscribed = await isSubscribedToAll(msg.from.id);
+    } catch (err) { /* davom etamiz */ }
+    if (!subscribed) return;
+  }
+
+  // AI ga yuborish
+  try {
+    // Avval "O'ylamoqda..." xabarini yuboramiz
+    const thinkingMsg = await bot.sendMessage(
+      msg.chat.id,
+      '<tg-emoji emoji-id="5456125285160226779">🤔</tg-emoji> <i>O\'ylamoqda...</i>',
+      {
+        parse_mode: 'HTML',
+        reply_to_message_id: msg.message_id,
+      }
+    );
+
+    const userText = msg.text.replace(`@${botUsername}`, '').trim();
+    const aiReply = await askGroq(userText);
+
+    // "O'ylamoqda..." xabarini AI javobi bilan almashtiramiz
+    await bot.editMessageText(aiReply, {
+      chat_id: msg.chat.id,
+      message_id: thinkingMsg.message_id,
+      parse_mode: 'HTML',
+    });
+  } catch (err) {
+    console.error('AI message handler xatosi:', err.message);
+  }
+});
+
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const messageId = query.message.message_id;
@@ -347,7 +412,7 @@ bot.on('callback_query', async (query) => {
   if (query.data === 'show_phone') {
     try {
       await bot.answerCallbackQuery(query.id, {
-        text: '📞 +998505060717\n\nQo\'ng\'iroq qilish uchun xabardagi raqamga bosing.',
+        text: "+998505060717\n\nQo'ng'iroq qilish uchun xabardagi raqamga bosing.",
         show_alert: true,
       });
     } catch (err) {
@@ -367,7 +432,7 @@ bot.on('callback_query', async (query) => {
 
     if (subscribed) {
       await deleteMessageSafe(chatId, messageId);
-      await sendMainMenu(chatId);
+      await sendMainMenu(chatId, isGroup);
       try {
         await bot.answerCallbackQuery(query.id, { text: '✅ Obuna tasdiqlandi!' });
       } catch (err) {
@@ -392,35 +457,32 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Menyu bo'limlariga kirishdan oldin ham obunani tekshiramiz
-  let subscribed = true;
-  try {
-    subscribed = await isSubscribedToAll(userId);
-  } catch (err) {
-    console.error('menyu obuna tekshiruvi xatosi:', err.message);
-  }
-
-  if (!subscribed) {
-    await deleteMessageSafe(chatId, messageId);
-    const { text, keyboard } = gateScreen();
-    await safeSend(chatId, text, keyboard);
+  // Shaxsiy chatda obuna tekshiruvi
+  if (!isGroup) {
+    let subscribed = true;
     try {
-      await bot.answerCallbackQuery(query.id, {
-        text: "❌ Avval kanallarga obuna bo'ling.",
-        show_alert: true,
-      });
+      subscribed = await isSubscribedToAll(userId);
     } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
+      console.error('menyu obuna tekshiruvi xatosi:', err.message);
     }
-    return;
+
+    if (!subscribed) {
+      await deleteMessageSafe(chatId, messageId);
+      const { text, keyboard } = gateScreen();
+      await safeSend(chatId, text, keyboard);
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: "❌ Avval kanallarga obuna bo'ling.",
+          show_alert: true,
+        });
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+      return;
+    }
   }
 
   const { text, keyboard } = screenFn();
-
-  // Asosiy menyuga qaytishda banner rasm bilan qayta yuborish kerak,
-  // boshqa bo'limlarga o'tishda esa oddiy matnli xabar bilan almashtiramiz.
-  // (Eski xabar rasmli yoki matnli bo'lishi mumkin — shu sababli har doim
-  //  o'chirib, yangi xabar yuboramiz, "edit" orqali emas)
   await deleteMessageSafe(chatId, messageId);
 
   if (query.data === 'menu_back') {
@@ -439,7 +501,7 @@ bot.on('callback_query', async (query) => {
 });
 
 // ---------------------------------------------------------------------------
-// Bot buyruqlari va menyu tugmasi (mini ilova)
+// Bot buyruqlari
 // ---------------------------------------------------------------------------
 async function configureBot() {
   try {
@@ -466,7 +528,7 @@ async function configureBot() {
 }
 
 // ---------------------------------------------------------------------------
-// Express server + webhook (Render uchun)
+// Express server + webhook
 // ---------------------------------------------------------------------------
 const app = express();
 app.use(express.json());
@@ -487,12 +549,12 @@ app.listen(PORT, async () => {
     const fullWebhookUrl = `${WEBHOOK_URL.replace(/\/$/, '')}/bot${BOT_TOKEN}`;
     try {
       await bot.setWebHook(fullWebhookUrl);
-      console.log('Webhook o\'rnatildi:', fullWebhookUrl);
+      console.log("Webhook o'rnatildi:", fullWebhookUrl);
     } catch (err) {
-      console.error('Webhook o\'rnatishda xatolik:', err.message);
+      console.error("Webhook o'rnatishda xatolik:", err.message);
     }
   } else {
-    console.warn('WEBHOOK_URL berilmagan — webhook o\'rnatilmadi. .env faylni tekshiring.');
+    console.warn("WEBHOOK_URL berilmagan — webhook o'rnatilmadi.");
   }
 
   await configureBot();
