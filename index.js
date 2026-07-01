@@ -20,6 +20,10 @@ if (!BOT_TOKEN) {
 
 const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: false } });
 
+// bot.getMe() natijasini keshlab qo'yamiz — har xabarda qayta so'ramaslik uchun
+let BOT_USERNAME = '';
+let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
+
 // ---------------------------------------------------------------------------
 // Groq AI client
 // ---------------------------------------------------------------------------
@@ -123,16 +127,19 @@ function stripPremium(keyboard) {
 // Obuna tekshiruvi
 // ---------------------------------------------------------------------------
 async function isSubscribedToAll(userId) {
-  for (const ch of REQUIRED_CHANNELS) {
-    try {
-      const member = await bot.getChatMember(ch.username, userId);
-      if (['left', 'kicked'].includes(member.status)) return false;
-    } catch (err) {
-      console.error(`getChatMember xatosi (${ch.username}):`, err.message);
-      return false;
-    }
-  }
-  return true;
+  // Barcha kanallarni PARALLEL tekshiramiz (ketma-ket emas) — tezroq javob uchun
+  const results = await Promise.all(
+    REQUIRED_CHANNELS.map(async (ch) => {
+      try {
+        const member = await bot.getChatMember(ch.username, userId);
+        return !['left', 'kicked'].includes(member.status);
+      } catch (err) {
+        console.error(`getChatMember xatosi (${ch.username}):`, err.message);
+        return false;
+      }
+    })
+  );
+  return results.every(Boolean);
 }
 
 function gateScreen() {
@@ -300,11 +307,21 @@ async function sendMainMenu(chatId, isGroup = false) {
   const finalKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
   const finalText = isGroup ? stripTgEmoji(text) : text;
   try {
-    await bot.sendPhoto(chatId, MAIN_BANNER_PATH, {
+    // Agar banner file_id keshda bo'lsa, uni ishlatamiz — bu qayta yuklashdan
+    // ancha tezroq, chunki Telegram serveriga fayl qayta upload qilinmaydi.
+    const photoSource = CACHED_BANNER_FILE_ID || MAIN_BANNER_PATH;
+    const sent = await bot.sendPhoto(chatId, photoSource, {
       caption: finalText,
       parse_mode: 'HTML',
       reply_markup: { inline_keyboard: finalKeyboard },
     });
+    // Birinchi (fayldan) yuborishdan keyin qaytgan file_id ni saqlab qo'yamiz
+    if (!CACHED_BANNER_FILE_ID) {
+      const photos = sent.photo;
+      if (photos && photos.length) {
+        CACHED_BANNER_FILE_ID = photos[photos.length - 1].file_id;
+      }
+    }
   } catch (err) {
     console.error('sendPhoto xatosi (banner), faqat matn yuborilmoqda:', err.message);
     await safeSend(chatId, finalText, finalKeyboard);
@@ -358,7 +375,7 @@ bot.on('message', async (msg) => {
   if (!msg.text || msg.text.startsWith('/')) return;
 
   const chatType = msg.chat.type;
-  const botUsername = (await bot.getMe()).username;
+  const botUsername = BOT_USERNAME || (await bot.getMe()).username;
 
   // Guruhda faqat @mention yoki reply bo'lsa javob beramiz
   if (chatType === 'group' || chatType === 'supergroup') {
@@ -487,6 +504,15 @@ bot.on('callback_query', async (query) => {
     }
   }
 
+  // Tugma darhol "javob olindi" holatiga o'tsin — foydalanuvchi ekranida
+  // tugma qotib qolmasligi (loading holatida turib qolmasligi) uchun bu yerda
+  // answerCallbackQuery ni ogʻir amallardan (o'chirish/yuborish) OLDIN chaqiramiz.
+  try {
+    await bot.answerCallbackQuery(query.id);
+  } catch (err) {
+    console.error('answerCallbackQuery xatosi:', err.message);
+  }
+
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
 
@@ -497,18 +523,19 @@ bot.on('callback_query', async (query) => {
     const outText = isGroup ? stripTgEmoji(text) : text;
     await safeSend(chatId, outText, outKeyboard);
   }
-
-  try {
-    await bot.answerCallbackQuery(query.id);
-  } catch (err) {
-    console.error('answerCallbackQuery xatosi:', err.message);
-  }
 });
 
 // ---------------------------------------------------------------------------
 // Bot buyruqlari
 // ---------------------------------------------------------------------------
 async function configureBot() {
+  try {
+    const me = await bot.getMe();
+    BOT_USERNAME = me.username;
+  } catch (err) {
+    console.error('getMe xatosi:', err.message);
+  }
+
   try {
     await bot.setMyCommands([
       { command: 'start', description: "Botni ishga tushirish" },
