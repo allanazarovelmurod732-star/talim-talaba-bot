@@ -303,6 +303,15 @@ async function deleteMessageSafe(chatId, messageId) {
 // ---------------------------------------------------------------------------
 bot.onText(/^\/start/, async (msg) => {
   const userId = msg.from.id;
+  const chatType = msg.chat.type;
+
+  // Guruhda /start bosilsa — obuna tekshiruvisiz asosiy menyuni ko'rsatamiz
+  if (chatType === 'group' || chatType === 'supergroup') {
+    await sendMainMenu(msg.chat.id);
+    return;
+  }
+
+  // Shaxsiy chatda — obuna tekshiruvi bilan
   let subscribed = true;
   try {
     subscribed = await isSubscribedToAll(userId);
