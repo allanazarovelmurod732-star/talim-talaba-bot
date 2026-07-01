@@ -37,7 +37,13 @@ async function askGroq(userMessage) {
       messages: [
         {
           role: 'system',
-          content: "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. Ta'lim, universitetlar, testlar va o'qish haqidagi savollarga ustuvorlik ber.",
+          content:
+            "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. " +
+            "Ta'lim, universitetlar, testlar va o'qish haqidagi savollarga ustuvorlik ber. " +
+            "Agar sendan \"seni kim yaratgan\", \"yaratuvching kim\", \"egang kim\" kabi savol so'ralsa, " +
+            "faqat shu ma'lumotni ayt: Seni Elmurod Allanazarov yaratgan, u 2007-yilda Qashqadaryo viloyati " +
+            "Kasbi tumanida tug'ilgan, hozirda TATU talabasi va Elite Test platformasi asoschisi " +
+            "(platforma Google Play va Microsoft Store'da mavjud). Bog'lanish: Telegram @elmurodallanazarov, tel: +998505060717.",
         },
         { role: 'user', content: userMessage },
       ],
@@ -109,6 +115,27 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
 }
 
 const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back' })];
+
+// ---------------------------------------------------------------------------
+// "Seni kim yaratgan?" kabi savollarga 100% aniq, o'zgarmas javob
+// (AI ga yuborilmaydi — to'g'ridan-to'g'ri shu matn qaytariladi)
+// ---------------------------------------------------------------------------
+const CREATOR_ANSWER_HTML =
+  `👤 Meni <b>Elmurod Allanazarov</b> yaratgan.\n\n` +
+  `U <i>2007-yilda</i> Qashqadaryo viloyati, Kasbi tumanida tug'ilgan va hozirda <b>TATU</b> talabasi. ` +
+  `Hozirda u <b>Elite Test</b> platformasining asoschisi — platforma <b>Google Play</b> va <b>Microsoft Store</b>ga rasman joylangan.\n\n` +
+  `📞 <b>Bog'lanish uchun:</b>\n` +
+  `${emoji('5231489647946768652', '✈️')} Telegram: @elmurodallanazarov\n` +
+  `${emoji('5318765591014678496', '📞')} Telefon: +998505060717\n\n` +
+  `Bemalol bog'lanishingiz mumkin!`;
+
+// Turli yozilishlarni ("kim yaratgan", "yaratuvchisi kim", "egasi kim" va h.k.) ushlab qolish uchun kalit so'zlar
+const CREATOR_QUESTION_REGEX =
+  /(kim\s*(seni|sizni)?\s*yarat|yaratuvchi|yaratgan|kim\s*qilgan|egasi\s*kim|founder|creator|kim\s*(seni|sizni)?\s*ishlab\s*chiq|elmurod\s*allanazarov|elmurod\s*aka|dasturchisi\s*kim|kimning\s*boti)/i;
+
+function isCreatorQuestion(text) {
+  return CREATOR_QUESTION_REGEX.test(text);
+}
 
 function stripPremium(keyboard) {
   return keyboard
@@ -393,6 +420,8 @@ bot.on('message', async (msg) => {
     if (!subscribed) return;
   }
 
+  const userText = msg.text.replace(`@${botUsername}`, '').trim();
+
   // AI ga yuborish
   try {
     // Avval "O'ylamoqda..." xabarini yuboramiz
@@ -405,13 +434,18 @@ bot.on('message', async (msg) => {
       }
     );
 
-    const userText = msg.text.replace(`@${botUsername}`, '').trim();
-
-    // AI javob va 4 soniya kutishni parallel ishlatamiz
-    const [aiReply] = await Promise.all([
-      askGroq(userText),
-      new Promise(resolve => setTimeout(resolve, 4000)), // kamida 4s kutish
-    ]);
+    let aiReply;
+    if (isCreatorQuestion(userText)) {
+      // "Kim yaratgan" kabi savollarga AI chaqirilmasdan, 100% aniq javob beriladi
+      aiReply = CREATOR_ANSWER_HTML;
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // tabiiy ko'rinishi uchun qisqa kutish
+    } else {
+      // AI javob va 4 soniya kutishni parallel ishlatamiz
+      [aiReply] = await Promise.all([
+        askGroq(userText),
+        new Promise((resolve) => setTimeout(resolve, 4000)), // kamida 4s kutish
+      ]);
+    }
 
     // "O'ylamoqda..." xabarini AI javobi bilan almashtiramiz
     await bot.editMessageText(aiReply, {
