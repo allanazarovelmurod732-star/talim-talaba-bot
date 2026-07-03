@@ -56,6 +56,40 @@ async function askGemini(userMessage) {
   }
 }
 
+// Telegram'dan kelgan rasmni (file_id) yuklab, base64 formatga o'giradi
+async function downloadTelegramPhotoAsBase64(fileId) {
+  const fileUrl = await bot.getFileLink(fileId);
+  const res = await fetch(fileUrl);
+  if (!res.ok) throw new Error(`Rasmni yuklab olishda xatolik: ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+  const base64 = Buffer.from(arrayBuffer).toString('base64');
+  const mimeType = res.headers.get('content-type') || 'image/jpeg';
+  return { base64, mimeType };
+}
+
+// Rasm + (ixtiyoriy) matn asosida Gemini'dan javob oladi
+async function askGeminiVision(userMessage, base64Image, mimeType) {
+  if (!genAI) return "AI hozircha ulanmagan.";
+  try {
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: {
+        maxOutputTokens: 1024,
+        temperature: 0.7,
+      },
+    });
+    const result = await model.generateContent([
+      { inlineData: { data: base64Image, mimeType } },
+      userMessage || "Bu rasmda nima ekanligini o'zbek tilida qisqa tushuntirib ber.",
+    ]);
+    return result.response.text() || "Javob ololmadim.";
+  } catch (err) {
+    console.error('Gemini vision xatosi:', err.message);
+    return "Rasmni tahlil qila olmadim. Keyinroq urinib ko'ring.";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Xatolik himoyasi
 // ---------------------------------------------------------------------------
@@ -397,15 +431,17 @@ bot.onText(/^\/start/, async (msg) => {
 // (Shaxsiy chatda: barcha matnlar; Guruhda: faqat bot username bilan yoki reply)
 // ---------------------------------------------------------------------------
 bot.on('message', async (msg) => {
-  // Buyruqlarni o'tkazib yuboramiz
-  if (!msg.text || msg.text.startsWith('/')) return;
+  // Buyruqlarni o'tkazib yuboramiz; matn ham, rasm ham bo'lmasa — chiqib ketamiz
+  if (msg.text && msg.text.startsWith('/')) return;
+  if (!msg.text && !msg.photo) return;
 
   const chatType = msg.chat.type;
   const botUsername = BOT_USERNAME || (await bot.getMe()).username;
+  const textOrCaption = msg.text || msg.caption || '';
 
   // Guruhda faqat @mention yoki reply bo'lsa javob beramiz
   if (chatType === 'group' || chatType === 'supergroup') {
-    const isMentioned = msg.text.includes(`@${botUsername}`);
+    const isMentioned = textOrCaption.includes(`@${botUsername}`);
     const isReply = msg.reply_to_message?.from?.username === botUsername;
     if (!isMentioned && !isReply) return;
   }
@@ -419,7 +455,7 @@ bot.on('message', async (msg) => {
     if (!subscribed) return;
   }
 
-  const userText = msg.text.replace(`@${botUsername}`, '').trim();
+  const userText = textOrCaption.replace(`@${botUsername}`, '').trim();
 
   // AI ga yuborish
   try {
@@ -434,7 +470,17 @@ bot.on('message', async (msg) => {
     );
 
     let aiReply;
-    if (isCreatorQuestion(userText)) {
+    if (msg.photo && msg.photo.length > 0) {
+      // Rasmni tahlil qilamiz — eng yuqori sifatli versiyasini (oxirgisini) olamiz
+      try {
+        const bestPhoto = msg.photo[msg.photo.length - 1];
+        const { base64, mimeType } = await downloadTelegramPhotoAsBase64(bestPhoto.file_id);
+        aiReply = await askGeminiVision(userText, base64, mimeType);
+      } catch (imgErr) {
+        console.error('Rasmni yuklashda xatolik:', imgErr.message);
+        aiReply = "Rasmni yuklab olishda xatolik yuz berdi. Keyinroq urinib ko'ring.";
+      }
+    } else if (isCreatorQuestion(userText)) {
       // "Kim yaratgan" kabi savollarga AI chaqirilmasdan, 100% aniq javob beriladi
       aiReply = CREATOR_ANSWER_HTML;
       await new Promise((resolve) => setTimeout(resolve, 1000)); // tabiiy ko'rinishi uchun qisqa kutish
