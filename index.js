@@ -2,7 +2,7 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
-const Groq = require('groq-sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Asosiy menyu tepasidagi banner rasm (assets papkasida bo'lishi shart)
 const MAIN_BANNER_PATH = path.join(__dirname, 'assets', 'banner.jpg');
@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const MINI_APP_URL = process.env.MINI_APP_URL || '';
 const PORT = process.env.PORT || 3000;
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 if (!BOT_TOKEN) {
   console.error("XATOLIK: BOT_TOKEN environment o'zgaruvchisi topilmadi (.env faylga qarang).");
@@ -25,34 +25,33 @@ let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
 
 // ---------------------------------------------------------------------------
-// Groq AI client
+// Gemini AI client
 // ---------------------------------------------------------------------------
-const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
+const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
-async function askGroq(userMessage) {
-  if (!groq) return "AI hozircha ulanmagan.";
+const SYSTEM_INSTRUCTION =
+  "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. " +
+  "Ta'lim, universitetlar, testlar va o'qish haqidagi savollarga ustuvorlik ber. " +
+  "Agar sendan \"seni kim yaratgan\", \"yaratuvching kim\", \"egang kim\" kabi savol so'ralsa, " +
+  "faqat shu ma'lumotni ayt: Seni Elmurod Allanazarov yaratgan, u 2007-yilda Qashqadaryo viloyati " +
+  "Kasbi tumanida tug'ilgan, hozirda TATU talabasi va Elite Test platformasi asoschisi " +
+  "(platforma Google Play va Microsoft Store'da mavjud). Bog'lanish: Telegram @elmurodallanazarov, tel: +998505060717.";
+
+async function askGemini(userMessage) {
+  if (!genAI) return "AI hozircha ulanmagan.";
   try {
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        {
-          role: 'system',
-          content:
-            "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. " +
-            "Ta'lim, universitetlar, testlar va o'qish haqidagi savollarga ustuvorlik ber. " +
-            "Agar sendan \"seni kim yaratgan\", \"yaratuvching kim\", \"egang kim\" kabi savol so'ralsa, " +
-            "faqat shu ma'lumotni ayt: Seni Elmurod Allanazarov yaratgan, u 2007-yilda Qashqadaryo viloyati " +
-            "Kasbi tumanida tug'ilgan, hozirda TATU talabasi va Elite Test platformasi asoschisi " +
-            "(platforma Google Play va Microsoft Store'da mavjud). Bog'lanish: Telegram @elmurodallanazarov, tel: +998505060717.",
-        },
-        { role: 'user', content: userMessage },
-      ],
-      max_tokens: 1024,
-      temperature: 0.7,
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: {
+        maxOutputTokens: 1024,
+        temperature: 0.7,
+      },
     });
-    return response.choices[0]?.message?.content || "Javob ololmadim.";
+    const result = await model.generateContent(userMessage);
+    return result.response.text() || "Javob ololmadim.";
   } catch (err) {
-    console.error('Groq xatosi:', err.message);
+    console.error('Gemini xatosi:', err.message);
     return "AI javob bera olmadi. Keyinroq urinib ko'ring.";
   }
 }
@@ -442,7 +441,7 @@ bot.on('message', async (msg) => {
     } else {
       // AI javob va 4 soniya kutishni parallel ishlatamiz
       [aiReply] = await Promise.all([
-        askGroq(userText),
+        askGemini(userText),
         new Promise((resolve) => setTimeout(resolve, 4000)), // kamida 4s kutish
       ]);
     }
