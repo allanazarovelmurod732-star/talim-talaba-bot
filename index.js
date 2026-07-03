@@ -63,7 +63,21 @@ async function downloadTelegramPhotoAsBase64(fileId) {
   if (!res.ok) throw new Error(`Rasmni yuklab olishda xatolik: ${res.status}`);
   const arrayBuffer = await res.arrayBuffer();
   const base64 = Buffer.from(arrayBuffer).toString('base64');
-  const mimeType = res.headers.get('content-type') || 'image/jpeg';
+
+  // Telegram ko'pincha noto'g'ri/umumiy content-type ("application/octet-stream")
+  // qaytaradi, shuning uchun fayl kengaytmasiga qarab aniqlaymiz
+  const extMatch = fileUrl.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
+  const ext = extMatch ? extMatch[1].toLowerCase() : '';
+  const extToMime = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    heic: 'image/heic',
+  };
+  const mimeType = extToMime[ext] || 'image/jpeg'; // Telegram rasmlari odatda JPEG
+
   return { base64, mimeType };
 }
 
