@@ -2,7 +2,6 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Asosiy menyu tepasidagi banner rasm (assets papkasida bo'lishi shart)
 const MAIN_BANNER_PATH = path.join(__dirname, 'assets', 'banner.jpg');
@@ -11,7 +10,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const MINI_APP_URL = process.env.MINI_APP_URL || '';
 const PORT = process.env.PORT || 3000;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 
 if (!BOT_TOKEN) {
   console.error("XATOLIK: BOT_TOKEN environment o'zgaruvchisi topilmadi (.env faylga qarang).");
@@ -25,9 +24,10 @@ let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
 
 // ---------------------------------------------------------------------------
-// Gemini AI client
+// DeepSeek AI client (OpenAI-compatible /chat/completions endpoint)
 // ---------------------------------------------------------------------------
-const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
+const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
+const DEEPSEEK_MODEL = 'deepseek-v4-flash';
 
 const SYSTEM_INSTRUCTION =
   "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. " +
@@ -37,70 +37,36 @@ const SYSTEM_INSTRUCTION =
   "Kasbi tumanida tug'ilgan, hozirda TATU talabasi va Elite Test platformasi asoschisi " +
   "(platforma Google Play va Microsoft Store'da mavjud). Bog'lanish: Telegram @elmurodallanazarov, tel: +998505060717.";
 
-async function askGemini(userMessage) {
-  if (!genAI) return "AI hozircha ulanmagan.";
+async function askDeepSeek(userMessage) {
+  if (!DEEPSEEK_API_KEY) return "AI hozircha ulanmagan.";
   try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      systemInstruction: SYSTEM_INSTRUCTION,
-      generationConfig: {
-        maxOutputTokens: 1024,
-        temperature: 0.7,
+    const res = await fetch(DEEPSEEK_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
       },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        messages: [
+          { role: 'system', content: SYSTEM_INSTRUCTION },
+          { role: 'user', content: userMessage },
+        ],
+        max_tokens: 1024,
+        temperature: 0.7,
+      }),
     });
-    const result = await model.generateContent(userMessage);
-    return result.response.text() || "Javob ololmadim.";
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`DeepSeek API ${res.status}: ${errText}`);
+    }
+
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content || "Javob ololmadim.";
   } catch (err) {
-    console.error('Gemini xatosi:', err.message);
+    console.error('DeepSeek xatosi:', err.message);
     return "AI javob bera olmadi. Keyinroq urinib ko'ring.";
-  }
-}
-
-// Telegram'dan kelgan rasmni (file_id) yuklab, base64 formatga o'giradi
-async function downloadTelegramPhotoAsBase64(fileId) {
-  const fileUrl = await bot.getFileLink(fileId);
-  const res = await fetch(fileUrl);
-  if (!res.ok) throw new Error(`Rasmni yuklab olishda xatolik: ${res.status}`);
-  const arrayBuffer = await res.arrayBuffer();
-  const base64 = Buffer.from(arrayBuffer).toString('base64');
-
-  // Telegram ko'pincha noto'g'ri/umumiy content-type ("application/octet-stream")
-  // qaytaradi, shuning uchun fayl kengaytmasiga qarab aniqlaymiz
-  const extMatch = fileUrl.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
-  const ext = extMatch ? extMatch[1].toLowerCase() : '';
-  const extToMime = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    gif: 'image/gif',
-    heic: 'image/heic',
-  };
-  const mimeType = extToMime[ext] || 'image/jpeg'; // Telegram rasmlari odatda JPEG
-
-  return { base64, mimeType };
-}
-
-// Rasm + (ixtiyoriy) matn asosida Gemini'dan javob oladi
-async function askGeminiVision(userMessage, base64Image, mimeType) {
-  if (!genAI) return "AI hozircha ulanmagan.";
-  try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      systemInstruction: SYSTEM_INSTRUCTION,
-      generationConfig: {
-        maxOutputTokens: 1024,
-        temperature: 0.7,
-      },
-    });
-    const result = await model.generateContent([
-      { inlineData: { data: base64Image, mimeType } },
-      userMessage || "Bu rasmda nima ekanligini o'zbek tilida qisqa tushuntirib ber.",
-    ]);
-    return result.response.text() || "Javob ololmadim.";
-  } catch (err) {
-    console.error('Gemini vision xatosi:', err.message);
-    return "Rasmni tahlil qila olmadim. Keyinroq urinib ko'ring.";
   }
 }
 
@@ -485,15 +451,8 @@ bot.on('message', async (msg) => {
 
     let aiReply;
     if (msg.photo && msg.photo.length > 0) {
-      // Rasmni tahlil qilamiz — eng yuqori sifatli versiyasini (oxirgisini) olamiz
-      try {
-        const bestPhoto = msg.photo[msg.photo.length - 1];
-        const { base64, mimeType } = await downloadTelegramPhotoAsBase64(bestPhoto.file_id);
-        aiReply = await askGeminiVision(userText, base64, mimeType);
-      } catch (imgErr) {
-        console.error('Rasmni yuklashda xatolik:', imgErr.message);
-        aiReply = "Rasmni yuklab olishda xatolik yuz berdi. Keyinroq urinib ko'ring.";
-      }
+      // DeepSeek matnli model bo'lgani uchun rasmlarni tahlil qila olmaydi
+      aiReply = "Kechirasiz, hozircha faqat matnli xabarlarga javob bera olaman. Rasm tahlili mavjud emas.";
     } else if (isCreatorQuestion(userText)) {
       // "Kim yaratgan" kabi savollarga AI chaqirilmasdan, 100% aniq javob beriladi
       aiReply = CREATOR_ANSWER_HTML;
@@ -501,7 +460,7 @@ bot.on('message', async (msg) => {
     } else {
       // AI javob va 4 soniya kutishni parallel ishlatamiz
       [aiReply] = await Promise.all([
-        askGemini(userText),
+        askDeepSeek(userText),
         new Promise((resolve) => setTimeout(resolve, 4000)), // kamida 4s kutish
       ]);
     }
