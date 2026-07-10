@@ -10,7 +10,8 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const MINI_APP_URL = process.env.MINI_APP_URL || '';
 const PORT = process.env.PORT || 3000;
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 
 if (!BOT_TOKEN) {
   console.error("XATOLIK: BOT_TOKEN environment o'zgaruvchisi topilmadi (.env faylga qarang).");
@@ -24,10 +25,12 @@ let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
 
 // ---------------------------------------------------------------------------
-// DeepSeek AI client (OpenAI-compatible /chat/completions endpoint)
+// AI: Gemini (asosiy) + Groq (zaxira) — ikkalasi ham bepul tarif
 // ---------------------------------------------------------------------------
-const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
-const DEEPSEEK_MODEL = 'deepseek-v4-flash';
+const GEMINI_API_URL =
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 const SYSTEM_INSTRUCTION =
   "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. " +
@@ -37,36 +40,141 @@ const SYSTEM_INSTRUCTION =
   "Kasbi tumanida tug'ilgan, hozirda TATU talabasi va Elite Test platformasi asoschisi " +
   "(platforma Google Play va Microsoft Store'da mavjud). Bog'lanish: Telegram @elmurodallanazarov, tel: +998505060717.";
 
-async function askDeepSeek(userMessage) {
-  if (!DEEPSEEK_API_KEY) return "AI hozircha ulanmagan.";
+// Gemini API orqali javob olishga urinadi. Muvaffaqiyatsiz bo'lsa, null qaytaradi
+// (shunda chaqiruvchi tomon Groq'ga o'tadi) — faqat kalit umuman bo'lmasa yoki
+// javob formati noto'g'ri bo'lsa xato tashlaydi.
+async function askGemini(userMessage) {
+  if (!GEMINI_API_KEY) return null;
+  const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+      generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Gemini API ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '';
+  if (!text) throw new Error('Gemini bo\'sh javob qaytardi');
+  return text;
+}
+
+// Groq (Llama 3.3 70B) — Gemini limitga yetganda yoki xato bersa ishlatiladi
+async function askGroq(userMessage) {
+  if (!GROQ_API_KEY) return null;
+  const res = await fetch(GROQ_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        { role: 'user', content: userMessage },
+      ],
+      max_tokens: 1024,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Groq API ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text) throw new Error('Groq bo\'sh javob qaytardi');
+  return text;
+}
+
+// Avval Gemini'ni sinaydi, u ishlamasa (limit, xato, kalit yo'q) Groq'ga o'tadi
+async function askAI(userMessage) {
   try {
-    const res = await fetch(DEEPSEEK_API_URL, {
+    const reply = await askGemini(userMessage);
+    if (reply) return reply;
+  } catch (err) {
+    console.error('Gemini xatosi, Groq\'ga o\'tilmoqda:', err.message);
+  }
+
+  try {
+    const reply = await askGroq(userMessage);
+    if (reply) return reply;
+  } catch (err) {
+    console.error('Groq xatosi:', err.message);
+  }
+
+  return "AI javob bera olmadi. Keyinroq urinib ko'ring.";
+}
+
+// Telegram'dan kelgan rasmni (file_id) yuklab, base64 formatga o'giradi
+async function downloadTelegramPhotoAsBase64(fileId) {
+  const fileUrl = await bot.getFileLink(fileId);
+  const res = await fetch(fileUrl);
+  if (!res.ok) throw new Error(`Rasmni yuklab olishda xatolik: ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+  const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+  // Telegram ko'pincha noto'g'ri/umumiy content-type ("application/octet-stream")
+  // qaytaradi, shuning uchun fayl kengaytmasiga qarab aniqlaymiz
+  const extMatch = fileUrl.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
+  const ext = extMatch ? extMatch[1].toLowerCase() : '';
+  const extToMime = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    heic: 'image/heic',
+  };
+  const mimeType = extToMime[ext] || 'image/jpeg'; // Telegram rasmlari odatda JPEG
+
+  return { base64, mimeType };
+}
+
+// Rasm + (ixtiyoriy) matn asosida Gemini'dan javob oladi (Groq'da vision yo'q,
+// shuning uchun rasm tahlili faqat Gemini orqali ishlaydi)
+async function askGeminiVision(userMessage, base64Image, mimeType) {
+  if (!GEMINI_API_KEY) return "Rasm tahlili hozircha mavjud emas.";
+  try {
+    const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: DEEPSEEK_MODEL,
-        messages: [
-          { role: 'system', content: SYSTEM_INSTRUCTION },
-          { role: 'user', content: userMessage },
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { data: base64Image, mimeType } },
+              { text: userMessage || "Bu rasmda nima ekanligini o'zbek tilida qisqa tushuntirib ber." },
+            ],
+          },
         ],
-        max_tokens: 1024,
-        temperature: 0.7,
+        systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+        generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
       }),
     });
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      throw new Error(`DeepSeek API ${res.status}: ${errText}`);
+      throw new Error(`Gemini vision API ${res.status}: ${errText}`);
     }
 
     const data = await res.json();
-    return data?.choices?.[0]?.message?.content || "Javob ololmadim.";
+    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '';
+    return text || "Javob ololmadim.";
   } catch (err) {
-    console.error('DeepSeek xatosi:', err.message);
-    return "AI javob bera olmadi. Keyinroq urinib ko'ring.";
+    console.error('Gemini vision xatosi:', err.message);
+    return "Rasmni tahlil qila olmadim. Keyinroq urinib ko'ring.";
   }
 }
 
@@ -451,8 +559,15 @@ bot.on('message', async (msg) => {
 
     let aiReply;
     if (msg.photo && msg.photo.length > 0) {
-      // DeepSeek matnli model bo'lgani uchun rasmlarni tahlil qila olmaydi
-      aiReply = "Kechirasiz, hozircha faqat matnli xabarlarga javob bera olaman. Rasm tahlili mavjud emas.";
+      // Rasmni tahlil qilamiz — eng yuqori sifatli versiyasini (oxirgisini) olamiz
+      try {
+        const bestPhoto = msg.photo[msg.photo.length - 1];
+        const { base64, mimeType } = await downloadTelegramPhotoAsBase64(bestPhoto.file_id);
+        aiReply = await askGeminiVision(userText, base64, mimeType);
+      } catch (imgErr) {
+        console.error('Rasmni yuklashda xatolik:', imgErr.message);
+        aiReply = "Rasmni yuklab olishda xatolik yuz berdi. Keyinroq urinib ko'ring.";
+      }
     } else if (isCreatorQuestion(userText)) {
       // "Kim yaratgan" kabi savollarga AI chaqirilmasdan, 100% aniq javob beriladi
       aiReply = CREATOR_ANSWER_HTML;
@@ -460,7 +575,7 @@ bot.on('message', async (msg) => {
     } else {
       // AI javob va 4 soniya kutishni parallel ishlatamiz
       [aiReply] = await Promise.all([
-        askDeepSeek(userText),
+        askAI(userText),
         new Promise((resolve) => setTimeout(resolve, 4000)), // kamida 4s kutish
       ]);
     }
