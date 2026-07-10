@@ -43,13 +43,23 @@ const SYSTEM_INSTRUCTION =
 // Gemini API orqali javob olishga urinadi. Muvaffaqiyatsiz bo'lsa, null qaytaradi
 // (shunda chaqiruvchi tomon Groq'ga o'tadi) — faqat kalit umuman bo'lmasa yoki
 // javob formati noto'g'ri bo'lsa xato tashlaydi.
-async function askGemini(userMessage) {
+// replyContext — foydalanuvchi reply qilgan bot xabarining matni (bo'lsa), suhbat
+// tarixi sifatida modelga beriladi, shunda "davom et", "nima demoqchisan" kabi
+// savollarni ham tushunadi.
+async function askGemini(userMessage, replyContext) {
   if (!GEMINI_API_KEY) return null;
+
+  const contents = [];
+  if (replyContext) {
+    contents.push({ role: 'model', parts: [{ text: replyContext }] });
+  }
+  contents.push({ role: 'user', parts: [{ text: userMessage }] });
+
   const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      contents,
       systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
       generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
     }),
@@ -67,8 +77,15 @@ async function askGemini(userMessage) {
 }
 
 // Groq (Llama 3.3 70B) — Gemini limitga yetganda yoki xato bersa ishlatiladi
-async function askGroq(userMessage) {
+async function askGroq(userMessage, replyContext) {
   if (!GROQ_API_KEY) return null;
+
+  const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
+  if (replyContext) {
+    messages.push({ role: 'assistant', content: replyContext });
+  }
+  messages.push({ role: 'user', content: userMessage });
+
   const res = await fetch(GROQ_API_URL, {
     method: 'POST',
     headers: {
@@ -77,10 +94,7 @@ async function askGroq(userMessage) {
     },
     body: JSON.stringify({
       model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_INSTRUCTION },
-        { role: 'user', content: userMessage },
-      ],
+      messages,
       max_tokens: 1024,
       temperature: 0.7,
     }),
@@ -98,16 +112,16 @@ async function askGroq(userMessage) {
 }
 
 // Avval Gemini'ni sinaydi, u ishlamasa (limit, xato, kalit yo'q) Groq'ga o'tadi
-async function askAI(userMessage) {
+async function askAI(userMessage, replyContext) {
   try {
-    const reply = await askGemini(userMessage);
+    const reply = await askGemini(userMessage, replyContext);
     if (reply) return reply;
   } catch (err) {
     console.error('Gemini xatosi, Groq\'ga o\'tilmoqda:', err.message);
   }
 
   try {
-    const reply = await askGroq(userMessage);
+    const reply = await askGroq(userMessage, replyContext);
     if (reply) return reply;
   } catch (err) {
     console.error('Groq xatosi:', err.message);
@@ -223,6 +237,12 @@ function emoji(id, placeholder) {
 
 function stripTgEmoji(html) {
   return html.replace(/<tg-emoji emoji-id="\d+">(.*?)<\/tg-emoji>/g, '$1');
+}
+
+// AI'ga kontekst sifatida yuborishdan oldin barcha HTML teglarini tozalaydi
+// (bot xabarlari <b>, <i>, <tg-emoji> kabi teglar bilan yuborilgan bo'lishi mumkin)
+function stripAllHtml(html) {
+  return html.replace(/<[^>]+>/g, '').trim();
 }
 
 function btn({ text, callback_data, url, web_app, style, icon }) {
@@ -545,6 +565,13 @@ bot.on('message', async (msg) => {
 
   const userText = textOrCaption.replace(`@${botUsername}`, '').trim();
 
+  // Agar foydalanuvchi botning oldingi xabariga reply qilgan bo'lsa, o'sha xabar
+  // matnini kontekst sifatida olib qo'yamiz — shunda "davom et", "tushuntirib ber"
+  // kabi savollarni ham AI to'g'ri tushunadi
+  const repliedFromBot = msg.reply_to_message?.from?.username === botUsername;
+  const rawReplyText = msg.reply_to_message?.text || msg.reply_to_message?.caption || '';
+  const replyContext = repliedFromBot && rawReplyText ? stripAllHtml(rawReplyText) : undefined;
+
   // AI ga yuborish
   try {
     // Avval "O'ylamoqda..." xabarini yuboramiz
@@ -575,7 +602,7 @@ bot.on('message', async (msg) => {
     } else {
       // AI javob va 4 soniya kutishni parallel ishlatamiz
       [aiReply] = await Promise.all([
-        askAI(userText),
+        askAI(userText, replyContext),
         new Promise((resolve) => setTimeout(resolve, 4000)), // kamida 4s kutish
       ]);
     }
