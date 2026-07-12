@@ -12,6 +12,9 @@ const MINI_APP_URL = process.env.MINI_APP_URL || '';
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+// Mini ilovadagi "Fikr-mulohaza" formasidan kelgan xabarlar shu chatga yuboriladi
+// (bo'lmasa, faqat konsolga yoziladi)
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
 if (!BOT_TOKEN) {
   console.error("XATOLIK: BOT_TOKEN environment o'zgaruvchisi topilmadi (.env faylga qarang).");
@@ -346,6 +349,7 @@ function mainMenuScreen() {
     [btn({ text: "Ta'lim kanalimiz", callback_data: 'menu_channel', icon: EMOJI.channelMenuIcon, style: 'primary' })],
     [btn({ text: 'Test Platformamiz', callback_data: 'menu_test', icon: EMOJI.testMenuIcon, style: 'success' })],
     [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
+    [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
   ];
 
   if (MINI_APP_URL) {
@@ -418,11 +422,28 @@ function founderScreen() {
   return { text, keyboard };
 }
 
+function faqScreen() {
+  const text =
+    `❓ <b>Tez-tez so'raladigan savollar</b>\n\n` +
+    `<b>1. Bot bepulmi?</b>\n` +
+    `Ha, botning barcha imkoniyatlari to'liq bepul.\n\n` +
+    `<b>2. AI qanday savollarga javob beradi?</b>\n` +
+    `Ta'lim, universitetlar, testlar va o'qish bilan bog'liq har qanday savolga — shunchaki xabar yozing.\n\n` +
+    `<b>3. Rasm yuborsam bo'ladimi?</b>\n` +
+    `Ha, rasm yuboring — AI uni tahlil qilib, izoh beradi.\n\n` +
+    `<b>4. Muammo yoki taklif bo'lsa?</b>\n` +
+    `Mini ilovadagi "Fikr-mulohaza" bo'limi orqali yozing yoki bevosita <b>Elmurod Allanazarov</b>ga murojaat qiling.`;
+
+  const keyboard = [backRow];
+  return { text, keyboard };
+}
+
 const SCREENS = {
   menu_back: mainMenuScreen,
   menu_channel: channelScreen,
   menu_test: testScreen,
   menu_founder: founderScreen,
+  menu_faq: faqScreen,
 };
 
 // ---------------------------------------------------------------------------
@@ -507,6 +528,21 @@ async function deleteMessageSafe(chatId, messageId) {
 // ---------------------------------------------------------------------------
 // Handlerlar
 // ---------------------------------------------------------------------------
+// Shaxsiy chat ID'ni topish uchun — shu ID'ni .env fayldagi ADMIN_CHAT_ID ga
+// qo'yib qo'ysangiz, mini ilovadagi "Fikr-mulohaza" xabarlari shu chatga keladi
+bot.onText(/^\/id/, async (msg) => {
+  try {
+    await bot.sendMessage(
+      msg.chat.id,
+      `🆔 Ushbu chatning ID raqami:\n<code>${msg.chat.id}</code>\n\n` +
+        `Buni nusxalab, <code>.env</code> fayldagi <code>ADMIN_CHAT_ID</code> qatoriga joylashtiring.`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    console.error('/id buyrug\'i xatosi:', err.message);
+  }
+});
+
 bot.onText(/^\/start/, async (msg) => {
   const userId = msg.from.id;
   const chatType = msg.chat.type;
@@ -538,7 +574,49 @@ bot.onText(/^\/start/, async (msg) => {
 // AI: Oddiy matnli xabarlarni Groq orqali javoblash
 // (Shaxsiy chatda: barcha matnlar; Guruhda: faqat bot username bilan yoki reply)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Mini ilovadan (WebApp) kelgan ma'lumotlar — masalan "Fikr-mulohaza" formasi
+// ---------------------------------------------------------------------------
 bot.on('message', async (msg) => {
+  if (!msg.web_app_data) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(msg.web_app_data.data);
+  } catch (err) {
+    payload = { type: 'unknown', text: msg.web_app_data.data };
+  }
+
+  if (payload.type === 'feedback' && payload.text) {
+    const from = msg.from;
+    const fromLabel = from.username ? `@${from.username}` : `${from.first_name || ''} (ID: ${from.id})`;
+
+    // Adminga forward qilamiz (sozlangan bo'lsa)
+    if (ADMIN_CHAT_ID) {
+      try {
+        await bot.sendMessage(
+          ADMIN_CHAT_ID,
+          `📩 <b>Yangi fikr-mulohaza</b>\n\n👤 ${fromLabel}\n\n${payload.text}`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (err) {
+        console.error('Fikr-mulohazani adminga yuborishda xatolik:', err.message);
+      }
+    } else {
+      console.log(`[FIKR-MULOHAZA] ${fromLabel}: ${payload.text}`);
+    }
+
+    try {
+      await bot.sendMessage(msg.chat.id, "✅ Fikringiz uchun rahmat! U jamoamizga yetkazildi.");
+    } catch (err) {
+      console.error("Fikr-mulohaza tasdiqlash xabarini yuborishda xatolik:", err.message);
+    }
+  }
+});
+
+bot.on('message', async (msg) => {
+  // Mini ilova ma'lumotlari yuqorida alohida handlerda qayta ishlanadi
+  if (msg.web_app_data) return;
   // Buyruqlarni o'tkazib yuboramiz; matn ham, rasm ham bo'lmasa — chiqib ketamiz
   if (msg.text && msg.text.startsWith('/')) return;
   if (!msg.text && !msg.photo) return;
