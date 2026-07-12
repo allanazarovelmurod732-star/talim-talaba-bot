@@ -26,6 +26,9 @@ const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: false } });
 // bot.getMe() natijasini keshlab qo'yamiz — har xabarda qayta so'ramaslik uchun
 let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
+// Admin (ADMIN_CHAT_ID) fikr-mulohaza xabariga "Reply" qilsa, javobni asl
+// yozgan foydalanuvchiga qaytarish uchun: adminga yuborilgan xabar ID -> foydalanuvchi chat ID
+const feedbackReplyMap = new Map();
 
 // ---------------------------------------------------------------------------
 // AI: Gemini (asosiy) + Groq (zaxira) — ikkalasi ham bepul tarif
@@ -575,13 +578,27 @@ bot.onText(/^\/start/, async (msg) => {
   // Shuning uchun shu maxsus tugmani alohida yuboramiz.
   if (MINI_APP_URL) {
     try {
-      await bot.sendMessage(msg.chat.id, "👇 Fikr-mulohaza yuborish uchun shu tugmadan foydalaning:", {
-        reply_markup: {
-          keyboard: [[{ text: '📝 Mini ilova (fikr-mulohaza uchun)', web_app: { url: MINI_APP_URL } }]],
-          resize_keyboard: true,
-          is_persistent: true,
-        },
-      });
+      await bot.sendMessage(
+        msg.chat.id,
+        `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish uchun pastdagi tugmadan foydalaning:`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            keyboard: [
+              [
+                {
+                  text: 'Mini ilova (fikr-mulohaza uchun)',
+                  web_app: { url: MINI_APP_URL },
+                  style: 'success',
+                  icon_custom_emoji_id: '5443038326535759644',
+                },
+              ],
+            ],
+            resize_keyboard: true,
+            is_persistent: true,
+          },
+        }
+      );
     } catch (err) {
       console.error("Klaviatura tugmasini yuborishda xatolik:", err.message);
     }
@@ -612,11 +629,16 @@ bot.on('message', async (msg) => {
     // Adminga forward qilamiz (sozlangan bo'lsa)
     if (ADMIN_CHAT_ID) {
       try {
-        await bot.sendMessage(
+        const sentToAdmin = await bot.sendMessage(
           ADMIN_CHAT_ID,
-          `📩 <b>Yangi fikr-mulohaza</b>\n\n👤 ${fromLabel}\n\n${payload.text}`,
+          `📩 <b>Yangi fikr-mulohaza</b>\n\n👤 ${fromLabel}\n\n${payload.text}\n\n` +
+            `<i>Javob berish uchun shu xabarga "Reply" qiling — javobingiz avtomatik shu foydalanuvchiga yetkaziladi.</i>\n` +
+            `🆔 <code>${msg.chat.id}</code>`,
           { parse_mode: 'HTML' }
         );
+        // Tezkor kirish uchun xotirada ham saqlaymiz (server qayta ishga tushsa,
+        // yuqoridagi 🆔 qatoridan avtomatik qayta o'qib olinadi — ma'lumot yo'qolmaydi)
+        feedbackReplyMap.set(sentToAdmin.message_id, msg.chat.id);
       } catch (err) {
         console.error('Fikr-mulohazani adminga yuborishda xatolik:', err.message);
       }
@@ -632,9 +654,52 @@ bot.on('message', async (msg) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Admin fikr-mulohaza xabariga "Reply" qilsa — javobni asl foydalanuvchiga qaytaramiz
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (!ADMIN_CHAT_ID) return;
+  if (String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+  if (!msg.reply_to_message) return;
+
+  // Avval tezkor xotiradan qidiramiz; topilmasa — xabar matnidagi
+  // "🆔 123456789" qatoridan o'qib olamiz (server qayta ishga tushgan bo'lsa ham ishlaydi)
+  let targetChatId = feedbackReplyMap.get(msg.reply_to_message.message_id);
+  if (!targetChatId) {
+    const replyText = msg.reply_to_message.text || msg.reply_to_message.caption || '';
+    const match = replyText.match(/🆔\s*(\d+)/);
+    if (match) targetChatId = match[1];
+  }
+  if (!targetChatId) return;
+
+  msg._relayedToUser = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  try {
+    if (msg.text) {
+      await bot.sendMessage(targetChatId, `💬 <b>Jamoamizdan javob:</b>\n\n${msg.text}`, { parse_mode: 'HTML' });
+    } else if (msg.photo) {
+      const fileId = msg.photo[msg.photo.length - 1].file_id;
+      await bot.sendPhoto(targetChatId, fileId, {
+        caption: msg.caption ? `💬 <b>Jamoamizdan javob:</b>\n\n${msg.caption}` : '💬 <b>Jamoamizdan javob</b>',
+        parse_mode: 'HTML',
+      });
+    } else {
+      await bot.sendMessage(targetChatId, '💬 Jamoamizdan sizga javob keldi, lekin bu turdagi xabarni yuborib bo\'lmadi.');
+    }
+    await bot.sendMessage(msg.chat.id, '✅ Javobingiz foydalanuvchiga yetkazildi.');
+  } catch (err) {
+    console.error('Admin javobini foydalanuvchiga yetkazishda xatolik:', err.message);
+    try {
+      await bot.sendMessage(msg.chat.id, "❌ Javobni yetkazib bo'lmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).");
+    } catch (e) {}
+  }
+});
+
 bot.on('message', async (msg) => {
   // Mini ilova ma'lumotlari yuqorida alohida handlerda qayta ishlanadi
   if (msg.web_app_data) return;
+  // Admin fikr-mulohazaga javob berayotgan xabar yuqorida allaqachon qayta ishlandi
+  if (msg._relayedToUser) return;
   // Buyruqlarni o'tkazib yuboramiz; matn ham, rasm ham bo'lmasa — chiqib ketamiz
   if (msg.text && msg.text.startsWith('/')) return;
   if (!msg.text && !msg.photo) return;
