@@ -28,6 +28,8 @@
     --success-ink: #ffffff;
     --danger: #E0473B;
     --danger-ink: #ffffff;
+    --violet: #6A5AE0;
+    --violet-ink: #ffffff;
     --radius-lg: 22px;
     --radius-md: 14px;
     --container: 480px;
@@ -58,6 +60,28 @@
   .wrap {
     max-width: var(--container);
     margin: 0 auto;
+  }
+
+  /* ---------------- Top nav (native back) ---------------- */
+  .topnav {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+    min-height: 20px;
+  }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(233,230,245,0.08);
+    border: 1px solid rgba(233,230,245,0.14);
+    color: var(--on-dark-muted);
+    cursor: pointer;
   }
 
   /* ---------------- Hero ---------------- */
@@ -127,6 +151,41 @@
     filter: drop-shadow(0 6px 14px rgba(0,0,0,0.35));
   }
 
+  /* ---------------- Stat strip ---------------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 22px;
+    opacity: 0;
+    transform: translateY(10px);
+    animation: rise 0.6s ease forwards;
+    animation-delay: 0.04s;
+  }
+
+  .stat {
+    background: rgba(233,230,245,0.05);
+    border: 1px solid rgba(233,230,245,0.1);
+    border-radius: var(--radius-md);
+    padding: 12px 10px;
+    text-align: center;
+  }
+
+  .stat b {
+    display: block;
+    font-family: 'Fraunces', serif;
+    font-size: 19px;
+    color: var(--gold-bright);
+  }
+
+  .stat span {
+    display: block;
+    font-size: 10.5px;
+    color: var(--on-dark-muted);
+    margin-top: 2px;
+    letter-spacing: 0.01em;
+  }
+
   /* ---------------- Ticket cards ---------------- */
   .ticket {
     position: relative;
@@ -144,8 +203,10 @@
   }
 
   .ticket:nth-of-type(1) { animation-delay: 0.08s; }
-  .ticket:nth-of-type(2) { animation-delay: 0.16s; }
-  .ticket:nth-of-type(3) { animation-delay: 0.24s; }
+  .ticket:nth-of-type(2) { animation-delay: 0.14s; }
+  .ticket:nth-of-type(3) { animation-delay: 0.20s; }
+  .ticket:nth-of-type(4) { animation-delay: 0.26s; }
+  .ticket:nth-of-type(5) { animation-delay: 0.32s; }
 
   .ticket-stub {
     position: relative;
@@ -182,13 +243,15 @@
   }
 
   .stub-icon {
-    width: 30px;
-    height: 30px;
+    width: 34px;
+    height: 34px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    color: var(--ink);
   }
+
+  .stub-icon svg { width: 100%; height: 100%; }
 
   .ticket-body {
     padding: 18px 18px 18px 16px;
@@ -201,7 +264,15 @@
     color: var(--ink-soft);
     text-transform: uppercase;
     margin-bottom: 6px;
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .ticket-code .dot {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--gold);
   }
 
   .ticket h2 {
@@ -235,11 +306,20 @@
     transition: transform 0.15s ease, filter 0.15s ease;
   }
 
+  .action svg { width: 16px; height: 16px; flex-shrink: 0; }
+
   .action:active { transform: scale(0.96); }
 
   .action--primary { background: var(--primary); color: var(--primary-ink); }
   .action--success { background: var(--success); color: var(--success-ink); }
   .action--danger  { background: var(--danger);  color: var(--danger-ink); }
+  .action--violet  { background: var(--violet);  color: var(--violet-ink); }
+  .action--ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1.5px solid rgba(30,27,20,0.16);
+  }
+  .action:disabled { opacity: 0.45; pointer-events: none; }
 
   /* ---------------- Founder card ---------------- */
   .founder {
@@ -288,6 +368,8 @@
     padding: 3px 0;
   }
 
+  .schedule li svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--gold); }
+
   .schedule li b { color: var(--ink); font-weight: 700; }
 
   .link-row {
@@ -302,17 +384,54 @@
     justify-content: center;
   }
 
+  /* ---------------- Feedback card ---------------- */
+  .feedback .ticket-body { padding: 20px 18px; }
+
+  .feedback-field {
+    width: 100%;
+    resize: none;
+    border: 1.5px solid rgba(30,27,20,0.14);
+    background: var(--paper-2);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    font-family: 'Manrope', sans-serif;
+    font-size: 13.5px;
+    color: var(--ink);
+    min-height: 76px;
+    margin-bottom: 8px;
+  }
+
+  .feedback-field:focus {
+    outline: none;
+    border-color: var(--gold);
+  }
+
+  .feedback-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .char-count {
+    font-family: 'Space Mono', monospace;
+    font-size: 10.5px;
+    color: var(--ink-soft);
+  }
+
   /* ---------------- Footer ---------------- */
   .footer {
     text-align: center;
     margin-top: 26px;
     opacity: 0;
     animation: rise 0.6s ease forwards;
-    animation-delay: 0.32s;
+    animation-delay: 0.38s;
   }
 
   .footer-btn {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     background: transparent;
     border: 1px solid rgba(233,230,245,0.18);
     color: var(--on-dark-muted);
@@ -324,6 +443,8 @@
     cursor: pointer;
   }
 
+  .footer-btn svg { width: 14px; height: 14px; }
+
   .footer small {
     display: block;
     margin-top: 14px;
@@ -333,12 +454,41 @@
     letter-spacing: 0.04em;
   }
 
+  /* ---------------- Toast ---------------- */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translate(-50%, 16px);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 700;
+    padding: 12px 18px;
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    z-index: 20;
+  }
+
+  .toast svg { width: 16px; height: 16px; color: var(--success); flex-shrink: 0; }
+
+  .toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
   @keyframes rise {
     to { opacity: 1; transform: translateY(0); }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .hero, .ticket, .footer {
+    .hero, .stats, .ticket, .footer {
       animation: none !important;
       opacity: 1 !important;
       transform: none !important;
@@ -348,6 +498,17 @@
 </head>
 <body>
   <div class="wrap">
+
+    <div class="topnav">
+      <button class="icon-btn" id="shareBtn" aria-label="Ulashish" title="Do'stlarga ulashish">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+          <circle cx="18" cy="5" r="2.6" stroke="currentColor" stroke-width="1.6"/>
+          <circle cx="6" cy="12" r="2.6" stroke="currentColor" stroke-width="1.6"/>
+          <circle cx="18" cy="19" r="2.6" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M8.3 10.7L15.7 6.7M8.3 13.3L15.7 17.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
 
     <header class="hero">
       <div class="eyebrow">Ta'lim Talaba · Bot</div>
@@ -365,17 +526,35 @@
       </div>
     </header>
 
+    <div class="stats">
+      <div class="stat"><b>24/7</b><span>AI yordamchi</span></div>
+      <div class="stat"><b>2</b><span>Rasmiy kanal</span></div>
+      <div class="stat"><b>1</b><span>Test platforma</span></div>
+    </div>
+
     <!-- 1. Ta'lim kanalimiz -->
     <section class="ticket">
       <div class="ticket-stub">
         <div class="punch-bottom"></div>
-        <div class="stub-icon">📡</div>
+        <div class="stub-icon">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3V21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M7 7C5.5 8.6 4.7 10.3 4.7 12C4.7 13.7 5.5 15.4 7 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M17 7C18.5 8.6 19.3 10.3 19.3 12C19.3 13.7 18.5 15.4 17 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M4 4C1.8 6.4 0.7 9.1 0.7 12C0.7 14.9 1.8 17.6 4 20" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.55"/>
+            <path d="M20 4C22.2 6.4 23.3 9.1 23.3 12C23.3 14.9 22.2 17.6 20 20" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.55"/>
+            <circle cx="12" cy="21.5" r="1.3" fill="currentColor"/>
+          </svg>
+        </div>
       </div>
       <div class="ticket-body">
-        <span class="ticket-code">Bo'lim · 01</span>
+        <span class="ticket-code"><span class="dot"></span>Bo'lim · Kanal</span>
         <h2>Ta'lim kanalimiz</h2>
         <p>Ta'lim Talaba — siz qidirayotgan yangi kanallardan biri! U hozirda barcha universitetlar haqida eng so'nggi ma'lumotlarni berib kelmoqda. Siz ham talaba bo'lmoqchi bo'lsangiz, ushbu bottan tezroq foydalaning!</p>
-        <a class="action action--primary" href="https://t.me/talimtalaba" target="_blank" rel="noopener">🎓 Talaba</a>
+        <a class="action action--primary" href="https://t.me/talimtalaba" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 4L2.5 11.2C1.7 11.5 1.7 12.7 2.5 13L7.5 14.7L9.8 21C10.1 21.8 11.2 21.9 11.7 21.2L14.3 17.7L19 20.8C19.7 21.3 20.7 20.9 20.9 20.1L23 5.3C23.2 4.4 22.2 3.6 21 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7.5 14.7L18 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          Kanalga o'tish
+        </a>
       </div>
     </section>
 
@@ -383,20 +562,52 @@
     <section class="ticket">
       <div class="ticket-stub">
         <div class="punch-bottom"></div>
-        <div class="stub-icon">📝</div>
+        <div class="stub-icon">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="5" y="3.5" width="14" height="18" rx="2.4" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M9 2.5H15V4.5C15 5.05 14.55 5.5 14 5.5H10C9.45 5.5 9 5.05 9 4.5V2.5Z" fill="currentColor"/>
+            <path d="M8.5 12.3L10.6 14.4L15.3 9.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M8.5 17.5H15.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+          </svg>
+        </div>
       </div>
       <div class="ticket-body">
-        <span class="ticket-code">Bo'lim · 02</span>
+        <span class="ticket-code"><span class="dot"></span>Bo'lim · Test</span>
         <h2>Test Platformamiz</h2>
         <p>Barcha turdagi test dasturlari shu yerda! Yangilik — DTM test. Ushbu bo'lim orqali bemalol milliy sertifikatingizni ishlatishingiz mumkin.</p>
-        <a class="action action--success" href="https://play.google.com/store/apps/details?id=app.netlify.eloquent_khapse_99d13b.twa&pcampaignid=web_share" target="_blank" rel="noopener">⬇️ Yuklab olish</a>
+        <a class="action action--success" href="https://play.google.com/store/apps/details?id=app.netlify.eloquent_khapse_99d13b.twa&pcampaignid=web_share" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3V15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 10.5L12 15L16.5 10.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 18.5V19.5C4.5 20.6 5.4 21.5 6.5 21.5H17.5C18.6 21.5 19.5 20.6 19.5 19.5V18.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          Yuklab olish
+        </a>
       </div>
     </section>
 
-    <!-- 3. Founder -->
+    <!-- 3. AI Yordamchi -->
+    <section class="ticket">
+      <div class="ticket-stub">
+        <div class="punch-bottom"></div>
+        <div class="stub-icon">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3L13.6 8.4L19 10L13.6 11.6L12 17L10.4 11.6L5 10L10.4 8.4L12 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="currentColor" fill-opacity="0.06"/>
+            <path d="M18.5 14L19.2 16.3L21.5 17L19.2 17.7L18.5 20L17.8 17.7L15.5 17L17.8 16.3L18.5 14Z" fill="currentColor"/>
+          </svg>
+        </div>
+      </div>
+      <div class="ticket-body">
+        <span class="ticket-code"><span class="dot"></span>Bo'lim · AI</span>
+        <h2>AI Yordamchi</h2>
+        <p>O'quv jarayoni, universitetlar yoki testlar haqida savolingiz bormi? Botga qaytib, xohlagan savolingizni oddiy matn sifatida yozing — sun'iy intellekt darhol javob beradi.</p>
+        <button class="action action--violet" id="aiBtn">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.4 4.9 3.5 6 3.5H18C19.1 3.5 20 4.4 20 5.5V14.5C20 15.6 19.1 16.5 18 16.5H9L5 20.5V16.5C4.4 16.5 4 16.1 4 15.5V5.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="12" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/></svg>
+          Bot bilan suhbatlashish
+        </button>
+      </div>
+    </section>
+
+    <!-- 4. Founder -->
     <section class="ticket founder">
       <div class="ticket-body">
-        <span class="ticket-code">Bo'lim · 03</span>
+        <span class="ticket-code"><span class="dot"></span>Bo'lim · Asoschi</span>
         <div class="founder-top">
           <div class="avatar">EA</div>
           <div>
@@ -406,28 +617,72 @@
         </div>
         <p>2007-yil 17-noyabrda Qashqadaryo viloyati, Kasbi tumanida tug'ilgan.</p>
         <ul class="schedule">
-          <li>📅 <b>Qabul vaqti:</b>&nbsp;Dushanba – Shanba</li>
-          <li>🕖 <b>07:00 – 12:00</b></li>
-          <li>🕕 <b>18:00 – 20:00</b></li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3.5" y="5" width="17" height="15.5" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 9.5H20.5" stroke="currentColor" stroke-width="1.6"/><path d="M8 3V6.5M16 3V6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <b>Qabul vaqti:</b>&nbsp;Dushanba – Shanba
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="8.3" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.5V12L15 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <b>07:00 – 12:00</b>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="8.3" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.5V12L15 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <b>18:00 – 20:00</b>
+          </li>
         </ul>
         <div class="link-row">
-          <a class="action action--success chip" href="https://t.me/elmurodallanazarov" target="_blank" rel="noopener">Telegram</a>
-          <a class="action action--danger chip" href="https://www.instagram.com/elmurodallanazarov?utm_source=qr&igsh=MWF0dWtpMDRmbTlpMA==" target="_blank" rel="noopener">Instagram</a>
-          <a class="action action--primary chip" href="tel:+998505060717">Telefon</a>
+          <a class="action action--success chip" href="https://t.me/elmurodallanazarov" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 4L2.5 11.2C1.7 11.5 1.7 12.7 2.5 13L7.5 14.7L9.8 21C10.1 21.8 11.2 21.9 11.7 21.2L14.3 17.7L19 20.8C19.7 21.3 20.7 20.9 20.9 20.1L23 5.3C23.2 4.4 22.2 3.6 21 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+            Telegram
+          </a>
+          <a class="action action--danger chip" href="https://www.instagram.com/elmurodallanazarov?utm_source=qr&igsh=MWF0dWtpMDRmbTlpMA==" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3.5" y="3.5" width="17" height="17" rx="5" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/><circle cx="17.2" cy="6.8" r="1.1" fill="currentColor"/></svg>
+            Instagram
+          </a>
+          <button class="action action--primary chip" id="phoneBtn">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6.5 3.5H9L10.5 8L8.2 9.4C9 11.5 10.5 13 12.6 13.8L14 11.5L18.5 13V15.5C18.5 16.9 17.3 18 15.9 17.9C10.1 17.5 5.5 12.9 5.1 7.1C5 5.7 5.1 3.5 6.5 3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+            Telefon
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Fikr-mulohaza -->
+    <section class="ticket founder feedback">
+      <div class="ticket-body">
+        <span class="ticket-code"><span class="dot"></span>Bo'lim · Fikr</span>
+        <h2 style="margin-bottom:6px;">Fikr-mulohaza qoldiring</h2>
+        <p>Taklif yoki muammo bormi? Yozing — to'g'ridan-to'g'ri jamoamizga yetib boradi.</p>
+        <textarea class="feedback-field" id="feedbackText" maxlength="500" placeholder="Fikringizni shu yerga yozing..."></textarea>
+        <div class="feedback-foot">
+          <span class="char-count"><span id="charNow">0</span>/500</span>
+          <button class="action action--ghost" id="feedbackBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 4L2.5 11.2C1.7 11.5 1.7 12.7 2.5 13L7.5 14.7L9.8 21C10.1 21.8 11.2 21.9 11.7 21.2L14.3 17.7L19 20.8C19.7 21.3 20.7 20.9 20.9 20.1L23 5.3C23.2 4.4 22.2 3.6 21 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+            Yuborish
+          </button>
         </div>
       </div>
     </section>
 
     <footer class="footer">
-      <button class="footer-btn" id="closeBtn">Botga qaytish</button>
+      <button class="footer-btn" id="closeBtn">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15 18L9 12L15 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Botga qaytish
+      </button>
       <small>TA'LIM TALABA © 2026</small>
     </footer>
 
   </div>
 
+  <div class="toast" id="toast">
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M8 12.3L10.6 15L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span id="toastText">Yuborildi!</span>
+  </div>
+
 <script>
   (function () {
     var tg = window.Telegram && window.Telegram.WebApp;
+
     if (tg) {
       tg.ready();
       tg.expand();
@@ -435,14 +690,104 @@
         tg.setHeaderColor('#11193A');
         tg.setBackgroundColor('#11193A');
       } catch (e) { /* eski klient bo'lishi mumkin, e'tiborsiz qoldiramiz */ }
+
+      // Native orqaga tugmasi — mavjud bo'lsa undan foydalanamiz
+      if (tg.BackButton) {
+        try {
+          tg.BackButton.show();
+          tg.BackButton.onClick(function () { tg.close(); });
+        } catch (e) {}
+      }
     }
 
-    var closeBtn = document.getElementById('closeBtn');
-    closeBtn.addEventListener('click', function () {
-      if (tg) {
-        tg.close();
+    function haptic(style) {
+      if (tg && tg.HapticFeedback) {
+        try { tg.HapticFeedback.impactOccurred(style || 'light'); } catch (e) {}
+      }
+    }
+
+    function notify(type) {
+      if (tg && tg.HapticFeedback) {
+        try { tg.HapticFeedback.notificationOccurred(type || 'success'); } catch (e) {}
+      }
+    }
+
+    function showToast(text) {
+      var toast = document.getElementById('toast');
+      document.getElementById('toastText').textContent = text;
+      toast.classList.add('show');
+      setTimeout(function () { toast.classList.remove('show'); }, 1800);
+    }
+
+    // Barcha tugma bosishlarida yengil vibratsiya
+    document.querySelectorAll('.action, .icon-btn, .footer-btn').forEach(function (el) {
+      el.addEventListener('click', function () { haptic('light'); });
+    });
+
+    // Botga qaytish
+    document.getElementById('closeBtn').addEventListener('click', function () {
+      if (tg) { tg.close(); } else { window.history.back(); }
+    });
+
+    // AI yordamchi — botga qaytib, foydalanuvchi savolini yozishi uchun yopamiz
+    document.getElementById('aiBtn').addEventListener('click', function () {
+      if (tg) { tg.close(); } else { window.location.href = 'https://t.me/'; }
+    });
+
+    // Telefon raqami — mini ilova ichida ko'rsatamiz
+    document.getElementById('phoneBtn').addEventListener('click', function () {
+      if (tg && tg.showPopup) {
+        try {
+          tg.showPopup({
+            title: 'Bog\'lanish',
+            message: "+998 50 506 07 17\n\nQo'ng'iroq qilish uchun raqamni nusxalang.",
+            buttons: [{ id: 'call', type: 'default', text: "Qo'ng'iroq qilish" }, { type: 'close' }]
+          }, function (id) {
+            if (id === 'call') { window.location.href = 'tel:+998505060717'; }
+          });
+          return;
+        } catch (e) {}
+      }
+      window.location.href = 'tel:+998505060717';
+    });
+
+    // Ulashish
+    document.getElementById('shareBtn').addEventListener('click', function () {
+      var botUrl = 'https://t.me/share/url?url=' + encodeURIComponent('https://t.me/talimtalaba') +
+        '&text=' + encodeURIComponent("Ta'lim Talaba boti — universitetlar, testlar va ta'lim yangiliklari bir joyda!");
+      if (tg && tg.openTelegramLink) {
+        tg.openTelegramLink(botUrl);
       } else {
-        window.history.back();
+        window.open(botUrl, '_blank');
+      }
+    });
+
+    // Fikr-mulohaza formasi
+    var feedbackText = document.getElementById('feedbackText');
+    var feedbackBtn = document.getElementById('feedbackBtn');
+    var charNow = document.getElementById('charNow');
+
+    feedbackText.addEventListener('input', function () {
+      var len = feedbackText.value.length;
+      charNow.textContent = len;
+      feedbackBtn.disabled = len === 0;
+    });
+
+    feedbackBtn.addEventListener('click', function () {
+      var text = feedbackText.value.trim();
+      if (!text) return;
+      notify('success');
+      if (tg && tg.sendData) {
+        try {
+          tg.sendData(JSON.stringify({ type: 'feedback', text: text }));
+        } catch (e) {}
+        showToast('Yuborildi, rahmat!');
+        setTimeout(function () { tg.close(); }, 900);
+      } else {
+        showToast('Yuborildi, rahmat!');
+        feedbackText.value = '';
+        charNow.textContent = '0';
+        feedbackBtn.disabled = true;
       }
     });
   })();
