@@ -568,6 +568,24 @@ bot.onText(/^\/start/, async (msg) => {
   }
 
   await sendMainMenu(msg.chat.id);
+
+  // MUHIM: Telegram cheklovi — mini ilova ichidagi "Fikr-mulohaza" formasi
+  // (sendData) faqat maxsus KLAVIATURA tugmasi orqali ochilganda ishlaydi.
+  // Inline tugma yoki menyu tugmasi orqali ochilganda sendData jim ishlamaydi.
+  // Shuning uchun shu maxsus tugmani alohida yuboramiz.
+  if (MINI_APP_URL) {
+    try {
+      await bot.sendMessage(msg.chat.id, "👇 Fikr-mulohaza yuborish uchun shu tugmadan foydalaning:", {
+        reply_markup: {
+          keyboard: [[{ text: '📝 Mini ilova (fikr-mulohaza uchun)', web_app: { url: MINI_APP_URL } }]],
+          resize_keyboard: true,
+          is_persistent: true,
+        },
+      });
+    } catch (err) {
+      console.error("Klaviatura tugmasini yuborishda xatolik:", err.message);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
