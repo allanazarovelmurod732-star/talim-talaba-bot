@@ -26,9 +26,13 @@ const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: false } });
 // bot.getMe() natijasini keshlab qo'yamiz — har xabarda qayta so'ramaslik uchun
 let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
-// Admin (ADMIN_CHAT_ID) fikr-mulohaza xabariga "Reply" qilsa, javobni asl
-// yozgan foydalanuvchiga qaytarish uchun: adminga yuborilgan xabar ID -> foydalanuvchi chat ID
+// Admin (ADMIN_CHAT_ID) fikr-mulohaza (yoki buyurtma) xabariga "Reply" qilsa,
+// javobni asl yozgan foydalanuvchiga qaytarish uchun: adminga yuborilgan xabar ID -> foydalanuvchi chat ID
 const feedbackReplyMap = new Map();
+
+// "Zakaz Olish" oqimidagi foydalanuvchi holati: chatId -> { step, grade }
+// step: 'awaiting_name' — sinf tanlangandan keyin ism-familiya kutilmoqda
+const orderState = new Map();
 
 // ---------------------------------------------------------------------------
 // AI: Gemini (asosiy) + Groq (zaxira) — ikkalasi ham bepul tarif
@@ -224,6 +228,16 @@ const EMOJI = {
   telegramIcon: '5231489647946768652',
   instagramIcon: '5231051793210810793',
   phoneIcon: '5318765591014678496',
+  zakazButtonIcon: '5406745015365943482',
+  zakazAskClassIcon: '5447644880824181073',
+  zakaz10Icon: '5429525083817255471',
+  zakaz11Icon: '5323664147244662095',
+};
+
+// "Zakaz Olish" oqimidagi sinf tanlash tugmalarining callback_data -> nom mosligi
+const ORDER_GRADE_LABELS = {
+  order_grade_10: '10-sinf',
+  order_grade_11: '11-sinf',
 };
 
 // ---------------------------------------------------------------------------
@@ -575,33 +589,44 @@ bot.onText(/^\/start/, async (msg) => {
   // MUHIM: Telegram cheklovi — mini ilova ichidagi "Fikr-mulohaza" formasi
   // (sendData) faqat maxsus KLAVIATURA tugmasi orqali ochilganda ishlaydi.
   // Inline tugma yoki menyu tugmasi orqali ochilganda sendData jim ishlamaydi.
-  // Shuning uchun shu maxsus tugmani alohida yuboramiz.
+  // Shuning uchun shu maxsus tugmani alohida yuboramiz. "Zakaz Olish" tugmasi
+  // mini ilovadan qat'i nazar har doim ko'rsatiladi.
+  const bottomKeyboardRows = [];
   if (MINI_APP_URL) {
-    try {
-      await bot.sendMessage(
-        msg.chat.id,
-        `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish uchun pastdagi tugmadan foydalaning:`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: {
-            keyboard: [
-              [
-                {
-                  text: 'Mini ilova (fikr-mulohaza uchun)',
-                  web_app: { url: MINI_APP_URL },
-                  style: 'success',
-                  icon_custom_emoji_id: '5443038326535759644',
-                },
-              ],
-            ],
-            resize_keyboard: true,
-            is_persistent: true,
-          },
-        }
-      );
-    } catch (err) {
-      console.error("Klaviatura tugmasini yuborishda xatolik:", err.message);
-    }
+    bottomKeyboardRows.push([
+      {
+        text: 'Mini ilova (fikr-mulohaza uchun)',
+        web_app: { url: MINI_APP_URL },
+        style: 'success',
+        icon_custom_emoji_id: '5443038326535759644',
+      },
+    ]);
+  }
+  bottomKeyboardRows.push([
+    {
+      text: 'Zakaz Olish',
+      style: 'success',
+      icon_custom_emoji_id: EMOJI.zakazButtonIcon,
+    },
+  ]);
+
+  try {
+    await bot.sendMessage(
+      msg.chat.id,
+      MINI_APP_URL
+        ? `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish yoki buyurtma berish uchun pastdagi tugmalardan foydalaning:`
+        : `${emoji(EMOJI.zakazButtonIcon, '🟢')} Buyurtma berish uchun pastdagi tugmadan foydalaning:`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          keyboard: bottomKeyboardRows,
+          resize_keyboard: true,
+          is_persistent: true,
+        },
+      }
+    );
+  } catch (err) {
+    console.error("Klaviatura tugmalarini yuborishda xatolik:", err.message);
   }
 });
 
@@ -655,6 +680,97 @@ bot.on('message', async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
+// "Zakaz Olish" tugmasi — foydalanuvchidan sinf (10/11) so'raladi
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+  if (msg.text.trim() !== 'Zakaz Olish') return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const chatId = msg.chat.id;
+  const text = `${emoji(EMOJI.zakazAskClassIcon, '📚')} <b>Iltimos, 10 yoki 11-sinflarning qaysi biriga zakaz olmoqchisiz?</b>`;
+  const keyboard = [
+    [
+      btn({ text: '10-sinf', callback_data: 'order_grade_10', style: 'primary', icon: EMOJI.zakaz10Icon }),
+      btn({ text: '11-sinf', callback_data: 'order_grade_11', style: 'danger', icon: EMOJI.zakaz11Icon }),
+    ],
+  ];
+
+  await safeSend(chatId, text, keyboard);
+});
+
+// ---------------------------------------------------------------------------
+// Sinf tanlangandan keyin — ism-familiyani qabul qilib, buyurtmani yakunlaydi
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (msg._orderFlow) return;
+  if (!msg.text || msg.text.startsWith('/')) return;
+
+  const chatId = msg.chat.id;
+  const state = orderState.get(chatId);
+  if (!state || state.step !== 'awaiting_name') return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const fullName = msg.text.trim();
+  if (fullName.length < 3) {
+    try {
+      await bot.sendMessage(chatId, "❗️ Iltimos, to'liq ism va familiyangizni kiriting (kamida 3 ta harf).", {
+        reply_markup: { force_reply: true },
+      });
+    } catch (err) {
+      console.error("Ism-familiya qayta so'rashda xatolik:", err.message);
+    }
+    return;
+  }
+
+  orderState.delete(chatId);
+
+  const from = msg.from;
+  const fromLabel = from.username ? `@${from.username}` : `${from.first_name || ''} (ID: ${from.id})`;
+
+  try {
+    await bot.sendMessage(
+      chatId,
+      `✅ <b>Buyurtmangiz qabul qilindi!</b>\n\n` +
+        `${emoji(EMOJI.zakazAskClassIcon, '📚')} Sinf: <b>${state.grade}</b>\n` +
+        `👤 Ism familiya: <b>${fullName}</b>\n\n` +
+        `Tez orada jamoamiz buyurtmangizni ko'rib chiqadi va kerakli PDF fayl shu botga yuboriladi.`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    console.error('Buyurtma tasdiqlash xabarini yuborishda xatolik:', err.message);
+  }
+
+  if (ADMIN_CHAT_ID) {
+    try {
+      const sentToAdmin = await bot.sendMessage(
+        ADMIN_CHAT_ID,
+        `🧾 <b>Yangi buyurtma</b>\n\n` +
+          `👤 ${fromLabel}\n` +
+          `📛 Ism familiya: <b>${fullName}</b>\n` +
+          `📚 Sinf: <b>${state.grade}</b>\n\n` +
+          `<i>Kerakli PDF faylni shu xabarga "Reply" qilib yuboring — u avtomatik shu foydalanuvchiga yetkaziladi.</i>\n` +
+          `🆔 <code>${chatId}</code>`,
+        { parse_mode: 'HTML' }
+      );
+      // Tezkor kirish uchun xotirada ham saqlaymiz (server qayta ishga tushsa,
+      // yuqoridagi 🆔 qatoridan avtomatik qayta o'qib olinadi — ma'lumot yo'qolmaydi)
+      feedbackReplyMap.set(sentToAdmin.message_id, chatId);
+    } catch (err) {
+      console.error('Buyurtmani adminga yuborishda xatolik:', err.message);
+    }
+  } else {
+    console.log(`[ZAKAZ] ${fromLabel} - ${fullName} - ${state.grade}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Admin fikr-mulohaza xabariga "Reply" qilsa — javobni asl foydalanuvchiga qaytaramiz
 // ---------------------------------------------------------------------------
 bot.on('message', async (msg) => {
@@ -677,6 +793,12 @@ bot.on('message', async (msg) => {
   try {
     if (msg.text) {
       await bot.sendMessage(targetChatId, `💬 <b>Jamoamizdan javob:</b>\n\n${msg.text}`, { parse_mode: 'HTML' });
+    } else if (msg.document) {
+      const fileId = msg.document.file_id;
+      await bot.sendDocument(targetChatId, fileId, {
+        caption: msg.caption ? `📄 <b>Jamoamizdan fayl:</b>\n\n${msg.caption}` : '📄 Buyurtmangiz bo\'yicha fayl tayyor!',
+        parse_mode: 'HTML',
+      });
     } else if (msg.photo) {
       const fileId = msg.photo[msg.photo.length - 1].file_id;
       await bot.sendPhoto(targetChatId, fileId, {
@@ -700,6 +822,8 @@ bot.on('message', async (msg) => {
   if (msg.web_app_data) return;
   // Admin fikr-mulohazaga javob berayotgan xabar yuqorida allaqachon qayta ishlandi
   if (msg._relayedToUser) return;
+  // "Zakaz Olish" oqimidagi xabar yuqorida allaqachon qayta ishlandi
+  if (msg._orderFlow) return;
   // Buyruqlarni o'tkazib yuboramiz; matn ham, rasm ham bo'lmasa — chiqib ketamiz
   if (msg.text && msg.text.startsWith('/')) return;
   if (!msg.text && !msg.photo) return;
@@ -824,6 +948,30 @@ bot.on('callback_query', async (query) => {
       } catch (err) {
         console.error('answerCallbackQuery xatosi:', err.message);
       }
+    }
+    return;
+  }
+
+  // Sinf tanlandi ("Zakaz Olish" oqimi) — ism-familiya so'raladi
+  if (query.data === 'order_grade_10' || query.data === 'order_grade_11') {
+    const grade = ORDER_GRADE_LABELS[query.data];
+    orderState.set(chatId, { step: 'awaiting_name', grade });
+
+    await deleteMessageSafe(chatId, messageId);
+
+    try {
+      await bot.answerCallbackQuery(query.id, { text: `✅ Tanlandi: ${grade}` });
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    try {
+      await bot.sendMessage(chatId, "✍️ Iltimos, <b>ism va familiyangizni</b> to'liq kiriting:", {
+        parse_mode: 'HTML',
+        reply_markup: { force_reply: true },
+      });
+    } catch (err) {
+      console.error("Ism-familiya so'rashda xatolik:", err.message);
     }
     return;
   }
