@@ -357,6 +357,8 @@ const EMOJI = {
   linkIcon: '5271604874419647061',
   pdfIcon: '5219922459205053449',
   backIcon: '5411112567609243032',
+  shareIcon: '5260567229375724180',
+  checkIcon: '5206607081334906820',
 };
 
 // "Majburiy Ona tili" oqimidagi kunlar ro'yxati (callback_data uchun kalit -> nom)
@@ -403,7 +405,7 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
   return button;
 }
 
-const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back' })];
+const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back', icon: EMOJI.backIcon })];
 
 // ---------------------------------------------------------------------------
 // "Seni kim yaratgan?" kabi savollarga 100% aniq, o'zgarmas javob
@@ -599,9 +601,10 @@ function referralGateScreen(userId, link) {
           "Bu botda foydali ta'lim materiallari bor, qo'shiling!"
         )}`,
         style: 'primary',
+        icon: EMOJI.shareIcon,
       }),
     ],
-    [btn({ text: '✅ Tekshirish', callback_data: 'md_check_referral', style: 'success' })],
+    [btn({ text: '✅ Tekshirish', callback_data: 'md_check_referral', style: 'success', icon: EMOJI.checkIcon })],
   ];
 
   return { text, keyboard };
