@@ -1,5 +1,6 @@
 require('dotenv').config();
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
 
@@ -23,6 +24,42 @@ if (!BOT_TOKEN) {
 
 const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: false } });
 
+// ---------------------------------------------------------------------------
+// "Majburiy Ona tili" PDF bazasi — oddiy JSON fayl orqali saqlanadi
+// Kalit format: "18_1" (18-iyul, 1-smena) -> Telegram file_id
+// ---------------------------------------------------------------------------
+const DATA_DIR = path.join(__dirname, 'data');
+const PDF_DB_PATH = path.join(DATA_DIR, 'mona_tili_pdfs.json');
+
+function loadPdfDb() {
+  try {
+    const raw = fs.readFileSync(PDF_DB_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    return {};
+  }
+}
+
+function savePdfDb(db) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(PDF_DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+  } catch (err) {
+    console.error('PDF bazasini saqlashda xatolik:', err.message);
+  }
+}
+
+function getPdfFileId(dateKey, smena) {
+  const db = loadPdfDb();
+  return db[`${dateKey}_${smena}`];
+}
+
+function setPdfFileId(dateKey, smena, fileId) {
+  const db = loadPdfDb();
+  db[`${dateKey}_${smena}`] = fileId;
+  savePdfDb(db);
+}
+
 // bot.getMe() natijasini keshlab qo'yamiz — har xabarda qayta so'ramaslik uchun
 let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
@@ -30,9 +67,6 @@ let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_
 // javobni asl yozgan foydalanuvchiga qaytarish uchun: adminga yuborilgan xabar ID -> foydalanuvchi chat ID
 const feedbackReplyMap = new Map();
 
-// "Zakaz Olish" oqimidagi foydalanuvchi holati: chatId -> { step, grade }
-// step: 'awaiting_name' — sinf tanlangandan keyin ism-familiya kutilmoqda
-const orderState = new Map();
 
 // ---------------------------------------------------------------------------
 // AI: Gemini (asosiy) + Groq (zaxira) — ikkalasi ham bepul tarif
@@ -228,17 +262,22 @@ const EMOJI = {
   telegramIcon: '5231489647946768652',
   instagramIcon: '5231051793210810793',
   phoneIcon: '5318765591014678496',
-  zakazButtonIcon: '5406745015365943482',
-  zakazAskClassIcon: '5447644880824181073',
-  zakaz10Icon: '5429525083817255471',
-  zakaz11Icon: '5323664147244662095',
+  monaTiliButtonIcon: '5436325327011854319',
+  monaTiliDateIcon: '5436325327011854319',
+  smena1Icon: '5382322671679708881',
+  smena2Icon: '5381990043642502553',
+  monaTiliSoonIcon: '5282843764451195532',
 };
 
-// "Zakaz Olish" oqimidagi sinf tanlash tugmalarining callback_data -> nom mosligi
-const ORDER_GRADE_LABELS = {
-  order_grade_10: '10-sinf',
-  order_grade_11: '11-sinf',
-};
+// "Majburiy Ona tili" oqimidagi kunlar ro'yxati (callback_data uchun kalit -> nom)
+const MONA_TILI_DATES = [
+  { key: '18', label: '18-iyul' },
+  { key: '19', label: '19-iyul' },
+  { key: '20', label: '20-iyul' },
+  { key: '21', label: '21-iyul' },
+  { key: '22', label: '22-iyul' },
+  { key: '23', label: '23-iyul' },
+];
 
 // ---------------------------------------------------------------------------
 // Majburiy obuna kanallar
@@ -455,6 +494,42 @@ function faqScreen() {
   return { text, keyboard };
 }
 
+function monaTiliDatesScreen() {
+  const text =
+    `${emoji(EMOJI.monaTiliDateIcon, '📅')} <b>Majburiy Ona tili</b>\n\n` +
+    `Kerakli kunni tanlang:`;
+
+  const keyboard = MONA_TILI_DATES.map((d) => [
+    btn({ text: d.label, callback_data: `md_date_${d.key}`, style: 'primary', icon: EMOJI.monaTiliDateIcon }),
+  ]);
+
+  return { text, keyboard };
+}
+
+function monaTiliSmenaScreen(dateLabel, dateKey) {
+  const text =
+    `${emoji(EMOJI.monaTiliDateIcon, '📅')} <b>${dateLabel}</b>\n\n` +
+    `Smenangizni tanlang:`;
+
+  const keyboard = [
+    [btn({ text: '1-smena', callback_data: `md_smena_1_${dateKey}`, style: 'primary', icon: EMOJI.smena1Icon })],
+    [btn({ text: '2-smena', callback_data: `md_smena_2_${dateKey}`, style: 'success', icon: EMOJI.smena2Icon })],
+    [btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger' })],
+  ];
+
+  return { text, keyboard };
+}
+
+function monaTiliSoonScreen() {
+  const text =
+    `${emoji(EMOJI.monaTiliSoonIcon, '🔜')} <b>Tez kunda!</b>\n\n` +
+    `23-iyul kuni uchun material hali tayyorlanmoqda.`;
+
+  const keyboard = [[btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger' })]];
+
+  return { text, keyboard };
+}
+
 const SCREENS = {
   menu_back: mainMenuScreen,
   menu_channel: channelScreen,
@@ -560,6 +635,35 @@ bot.onText(/^\/id/, async (msg) => {
   }
 });
 
+// Admin uchun — bazaga qaysi kun/smenalar uchun PDF saqlanganini ko'rsatadi
+bot.onText(/^\/pdflist/, async (msg) => {
+  if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+
+  const db = loadPdfDb();
+  const keys = Object.keys(db);
+  if (!keys.length) {
+    try {
+      await bot.sendMessage(msg.chat.id, "📂 Bazada hali PDF fayl yo'q.");
+    } catch (err) {
+      console.error('/pdflist xatosi:', err.message);
+    }
+    return;
+  }
+
+  const lines = keys.sort().map((k) => {
+    const [dateKey, smena] = k.split('_');
+    return `• ${dateKey}-iyul — ${smena}-smena`;
+  });
+
+  try {
+    await bot.sendMessage(msg.chat.id, `📂 <b>Bazadagi PDF fayllar:</b>\n\n${lines.join('\n')}`, {
+      parse_mode: 'HTML',
+    });
+  } catch (err) {
+    console.error('/pdflist xatosi:', err.message);
+  }
+});
+
 bot.onText(/^\/start/, async (msg) => {
   const userId = msg.from.id;
   const chatType = msg.chat.type;
@@ -589,7 +693,7 @@ bot.onText(/^\/start/, async (msg) => {
   // MUHIM: Telegram cheklovi — mini ilova ichidagi "Fikr-mulohaza" formasi
   // (sendData) faqat maxsus KLAVIATURA tugmasi orqali ochilganda ishlaydi.
   // Inline tugma yoki menyu tugmasi orqali ochilganda sendData jim ishlamaydi.
-  // Shuning uchun shu maxsus tugmani alohida yuboramiz. "Zakaz Olish" tugmasi
+  // Shuning uchun shu maxsus tugmani alohida yuboramiz. "Majburiy Ona tili" tugmasi
   // mini ilovadan qat'i nazar har doim ko'rsatiladi.
   const bottomKeyboardRows = [];
   if (MINI_APP_URL) {
@@ -604,9 +708,9 @@ bot.onText(/^\/start/, async (msg) => {
   }
   bottomKeyboardRows.push([
     {
-      text: 'Zakaz Olish',
+      text: 'Majburiy Ona tili',
       style: 'success',
-      icon_custom_emoji_id: EMOJI.zakazButtonIcon,
+      icon_custom_emoji_id: EMOJI.monaTiliButtonIcon,
     },
   ]);
 
@@ -614,8 +718,8 @@ bot.onText(/^\/start/, async (msg) => {
     await bot.sendMessage(
       msg.chat.id,
       MINI_APP_URL
-        ? `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish yoki buyurtma berish uchun pastdagi tugmalardan foydalaning:`
-        : `${emoji(EMOJI.zakazButtonIcon, '🟢')} Buyurtma berish uchun pastdagi tugmadan foydalaning:`,
+        ? `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish yoki "Majburiy Ona tili" materiallarini olish uchun pastdagi tugmalardan foydalaning:`
+        : `${emoji(EMOJI.monaTiliButtonIcon, '🟢')} "Majburiy Ona tili" materiallarini olish uchun pastdagi tugmadan foydalaning:`,
       {
         parse_mode: 'HTML',
         reply_markup: {
@@ -680,93 +784,68 @@ bot.on('message', async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
-// "Zakaz Olish" tugmasi — foydalanuvchidan sinf (10/11) so'raladi
+// "Majburiy Ona tili" tugmasi — foydalanuvchiga kunlar ro'yxati ko'rsatiladi
 // ---------------------------------------------------------------------------
 bot.on('message', async (msg) => {
   if (msg.web_app_data) return;
   if (msg._relayedToUser) return;
   if (!msg.text) return;
-  if (msg.text.trim() !== 'Zakaz Olish') return;
+  if (msg.text.trim() !== 'Majburiy Ona tili') return;
 
   msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
 
   const chatId = msg.chat.id;
-  const text = `${emoji(EMOJI.zakazAskClassIcon, '📚')} <b>Iltimos, 10 yoki 11-sinflarning qaysi biriga zakaz olmoqchisiz?</b>`;
-  const keyboard = [
-    [
-      btn({ text: '10-sinf', callback_data: 'order_grade_10', style: 'primary', icon: EMOJI.zakaz10Icon }),
-      btn({ text: '11-sinf', callback_data: 'order_grade_11', style: 'danger', icon: EMOJI.zakaz11Icon }),
-    ],
-  ];
-
+  const { text, keyboard } = monaTiliDatesScreen();
   await safeSend(chatId, text, keyboard);
 });
 
 // ---------------------------------------------------------------------------
-// Sinf tanlangandan keyin — ism-familiyani qabul qilib, buyurtmani yakunlaydi
+// Admin PDF yuklash — "Majburiy Ona tili" bazasiga PDF qo'shish
+// Admin ADMIN_CHAT_ID chatiga PDF faylni quyidagi formatdagi izoh (caption) bilan
+// yuborsa, u avtomatik bazaga saqlanadi (Reply emas, oddiy yangi xabar sifatida):
+//   18-iyul 1-smena
+//   18-iyul 2-smena
+// (kun: 18, 19, 20, 21 yoki 22; smena: 1 yoki 2)
 // ---------------------------------------------------------------------------
-bot.on('message', async (msg) => {
-  if (msg.web_app_data) return;
-  if (msg._relayedToUser) return;
-  if (msg._orderFlow) return;
-  if (!msg.text || msg.text.startsWith('/')) return;
+const PDF_CAPTION_REGEX = /^(\d{2})-iyul\s+(1|2)-smena$/i;
 
-  const chatId = msg.chat.id;
-  const state = orderState.get(chatId);
-  if (!state || state.step !== 'awaiting_name') return;
+bot.on('message', async (msg) => {
+  if (!ADMIN_CHAT_ID) return;
+  if (String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+  if (msg.reply_to_message) return; // Reply orqali kelgan javoblar boshqa handlerda qayta ishlanadi
+  if (!msg.document) return;
+
+  const caption = (msg.caption || '').trim();
+  const match = caption.match(PDF_CAPTION_REGEX);
+  if (!match) return;
 
   msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
 
-  const fullName = msg.text.trim();
-  if (fullName.length < 3) {
+  const dateKey = match[1];
+  const smena = match[2];
+  const dateLabel = `${dateKey}-iyul`;
+
+  const isPdf =
+    msg.document.mime_type === 'application/pdf' || /\.pdf$/i.test(msg.document.file_name || '');
+  if (!isPdf) {
     try {
-      await bot.sendMessage(chatId, "❗️ Iltimos, to'liq ism va familiyangizni kiriting (kamida 3 ta harf).", {
-        reply_markup: { force_reply: true },
-      });
+      await bot.sendMessage(msg.chat.id, '❗️ Faqat PDF fayl yuklang.');
     } catch (err) {
-      console.error("Ism-familiya qayta so'rashda xatolik:", err.message);
+      console.error('PDF format ogohlantirishi xatosi:', err.message);
     }
     return;
   }
 
-  orderState.delete(chatId);
-
-  const from = msg.from;
-  const fromLabel = from.username ? `@${from.username}` : `${from.first_name || ''} (ID: ${from.id})`;
+  setPdfFileId(dateKey, smena, msg.document.file_id);
 
   try {
     await bot.sendMessage(
-      chatId,
-      `✅ <b>Buyurtmangiz qabul qilindi!</b>\n\n` +
-        `${emoji(EMOJI.zakazAskClassIcon, '📚')} Sinf: <b>${state.grade}</b>\n` +
-        `👤 Ism familiya: <b>${fullName}</b>\n\n` +
-        `Tez orada jamoamiz buyurtmangizni ko'rib chiqadi va kerakli PDF fayl shu botga yuboriladi.`,
+      msg.chat.id,
+      `✅ <b>${dateLabel}, ${smena}-smena</b> uchun PDF bazaga saqlandi.`,
       { parse_mode: 'HTML' }
     );
   } catch (err) {
-    console.error('Buyurtma tasdiqlash xabarini yuborishda xatolik:', err.message);
-  }
-
-  if (ADMIN_CHAT_ID) {
-    try {
-      const sentToAdmin = await bot.sendMessage(
-        ADMIN_CHAT_ID,
-        `🧾 <b>Yangi buyurtma</b>\n\n` +
-          `👤 ${fromLabel}\n` +
-          `📛 Ism familiya: <b>${fullName}</b>\n` +
-          `📚 Sinf: <b>${state.grade}</b>\n\n` +
-          `<i>Kerakli PDF faylni shu xabarga "Reply" qilib yuboring — u avtomatik shu foydalanuvchiga yetkaziladi.</i>\n` +
-          `🆔 <code>${chatId}</code>`,
-        { parse_mode: 'HTML' }
-      );
-      // Tezkor kirish uchun xotirada ham saqlaymiz (server qayta ishga tushsa,
-      // yuqoridagi 🆔 qatoridan avtomatik qayta o'qib olinadi — ma'lumot yo'qolmaydi)
-      feedbackReplyMap.set(sentToAdmin.message_id, chatId);
-    } catch (err) {
-      console.error('Buyurtmani adminga yuborishda xatolik:', err.message);
-    }
-  } else {
-    console.log(`[ZAKAZ] ${fromLabel} - ${fullName} - ${state.grade}`);
+    console.error('PDF saqlash tasdiqlash xabari xatosi:', err.message);
   }
 });
 
@@ -822,7 +901,7 @@ bot.on('message', async (msg) => {
   if (msg.web_app_data) return;
   // Admin fikr-mulohazaga javob berayotgan xabar yuqorida allaqachon qayta ishlandi
   if (msg._relayedToUser) return;
-  // "Zakaz Olish" oqimidagi xabar yuqorida allaqachon qayta ishlandi
+  // "Majburiy Ona tili" oqimidagi xabar yuqorida allaqachon qayta ishlandi
   if (msg._orderFlow) return;
   // Buyruqlarni o'tkazib yuboramiz; matn ham, rasm ham bo'lmasa — chiqib ketamiz
   if (msg.text && msg.text.startsWith('/')) return;
@@ -952,26 +1031,81 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Sinf tanlandi ("Zakaz Olish" oqimi) — ism-familiya so'raladi
-  if (query.data === 'order_grade_10' || query.data === 'order_grade_11') {
-    const grade = ORDER_GRADE_LABELS[query.data];
-    orderState.set(chatId, { step: 'awaiting_name', grade });
+  // "Majburiy Ona tili" oqimi — kun tanlandi
+  if (query.data && query.data.startsWith('md_date_')) {
+    const dateKey = query.data.replace('md_date_', '');
+    const dateLabel = `${dateKey}-iyul`;
 
     await deleteMessageSafe(chatId, messageId);
-
     try {
-      await bot.answerCallbackQuery(query.id, { text: `✅ Tanlandi: ${grade}` });
+      await bot.answerCallbackQuery(query.id);
     } catch (err) {
       console.error('answerCallbackQuery xatosi:', err.message);
     }
 
+    if (dateKey === '23') {
+      const { text, keyboard } = monaTiliSoonScreen();
+      await safeSend(chatId, text, keyboard);
+    } else {
+      const { text, keyboard } = monaTiliSmenaScreen(dateLabel, dateKey);
+      await safeSend(chatId, text, keyboard);
+    }
+    return;
+  }
+
+  // "Majburiy Ona tili" oqimi — kunlar ro'yxatiga qaytish
+  if (query.data === 'md_dates_back') {
+    await deleteMessageSafe(chatId, messageId);
     try {
-      await bot.sendMessage(chatId, "✍️ Iltimos, <b>ism va familiyangizni</b> to'liq kiriting:", {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const { text, keyboard } = monaTiliDatesScreen();
+    await safeSend(chatId, text, keyboard);
+    return;
+  }
+
+  // "Majburiy Ona tili" oqimi — smena tanlandi, mos PDF yuboriladi
+  if (query.data && query.data.startsWith('md_smena_')) {
+    const parts = query.data.split('_'); // ['md', 'smena', '1'|'2', dateKey]
+    const smena = parts[2];
+    const dateKey = parts[3];
+    const dateLabel = `${dateKey}-iyul`;
+
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const fileId = getPdfFileId(dateKey, smena);
+    if (!fileId) {
+      try {
+        await bot.sendMessage(
+          chatId,
+          `❌ <b>${dateLabel}, ${smena}-smena</b> uchun material hali yuklanmagan. Keyinroq urinib ko'ring.`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (err) {
+        console.error('PDF topilmadi xabari xatosi:', err.message);
+      }
+      return;
+    }
+
+    try {
+      await bot.sendDocument(chatId, fileId, {
+        caption: `📄 <b>${dateLabel} — ${smena}-smena</b>`,
         parse_mode: 'HTML',
-        reply_markup: { force_reply: true },
       });
     } catch (err) {
-      console.error("Ism-familiya so'rashda xatolik:", err.message);
+      console.error('PDF yuborishda xatolik:', err.message);
+      try {
+        await bot.sendMessage(chatId, '❌ PDF yuborishda xatolik yuz berdi.');
+      } catch (e) {
+        console.error('PDF xato xabari yuborishda muammo:', e.message);
+      }
     }
     return;
   }
