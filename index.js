@@ -60,6 +60,83 @@ function setPdfFileId(dateKey, smena, fileId) {
   savePdfDb(db);
 }
 
+// ---------------------------------------------------------------------------
+// Referal tizimi — "Majburiy Ona tili" bo'limini ochish uchun foydalanuvchi
+// kamida REQUIRED_REFERRALS ta do'stini botga taklif qilishi kerak.
+// Baza: { referrers: { "<taklif_qiluvchi_id>": ["<taklif_qilingan_id>", ...] },
+//         invited: ["<taklif_qilingan_id>", ...] }  — "invited" har bir
+// foydalanuvchi faqat BIR marta (birinchi taklif qiluvchiga) hisoblanishi uchun.
+// ---------------------------------------------------------------------------
+const REFERRAL_DB_PATH = path.join(DATA_DIR, 'referrals.json');
+const REQUIRED_REFERRALS = 1;
+
+function loadReferralDb() {
+  try {
+    const raw = fs.readFileSync(REFERRAL_DB_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed.referrers) parsed.referrers = {};
+    if (!Array.isArray(parsed.invited)) parsed.invited = [];
+    return parsed;
+  } catch (err) {
+    return { referrers: {}, invited: [] };
+  }
+}
+
+function saveReferralDb(db) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(REFERRAL_DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Referal bazasini saqlashda xatolik:', err.message);
+  }
+}
+
+function getReferralCount(userId) {
+  const db = loadReferralDb();
+  const list = db.referrers[String(userId)];
+  return list ? list.length : 0;
+}
+
+function hasEnoughReferrals(userId) {
+  return getReferralCount(userId) >= REQUIRED_REFERRALS;
+}
+
+// referrerId — havolani ulashgan foydalanuvchi, inviteeId — shu havola orqali
+// botga kirgan yangi foydalanuvchi. O'zini-o'zi taklif qilish va bir
+// foydalanuvchini ikki marta hisoblash oldini olinadi.
+function addReferral(referrerId, inviteeId) {
+  const refId = String(referrerId);
+  const invId = String(inviteeId);
+  if (refId === invId) return false;
+
+  const db = loadReferralDb();
+  if (db.invited.includes(invId)) return false;
+
+  if (!db.referrers[refId]) db.referrers[refId] = [];
+  db.referrers[refId].push(invId);
+  db.invited.push(invId);
+  saveReferralDb(db);
+  return true;
+}
+
+// Bot username'ini keshdan oladi, bo'lmasa Telegram'dan so'raydi
+async function getBotUsername() {
+  if (!BOT_USERNAME) {
+    try {
+      const me = await bot.getMe();
+      BOT_USERNAME = me.username;
+    } catch (err) {
+      console.error('getMe (referal) xatosi:', err.message);
+    }
+  }
+  return BOT_USERNAME;
+}
+
+async function buildReferralLink(userId) {
+  const username = await getBotUsername();
+  return `https://t.me/${username}?start=ref_${userId}`;
+}
+
 // bot.getMe() natijasini keshlab qo'yamiz — har xabarda qayta so'ramaslik uchun
 let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
@@ -284,7 +361,6 @@ const MONA_TILI_DATES = [
 // ---------------------------------------------------------------------------
 const REQUIRED_CHANNELS = [
   { name: "Talim Talaba", username: '@talimtalaba', icon: '5451880684945708278' },
-  { name: 'IT kurslar', username: '@it_kurslarr', icon: '5807952667992920776' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -494,6 +570,30 @@ function faqScreen() {
   return { text, keyboard };
 }
 
+function referralGateScreen(userId, link) {
+  const count = getReferralCount(userId);
+  const text =
+    `🎁 <b>Majburiy Ona tili</b> materiallarini ochish uchun kamida <b>${REQUIRED_REFERRALS} ta do'stingizni</b> botga taklif qiling!\n\n` +
+    `📊 Taklif qilganlaringiz: <b>${count}/${REQUIRED_REFERRALS}</b>\n\n` +
+    `🔗 <b>Sizning shaxsiy havolangiz:</b>\n<code>${link}</code>\n\n` +
+    `<i>Do'stingiz shu havola orqali botga /start bosishi bilanoq hisoblanadi. Shundan so'ng pastdagi "Tekshirish" tugmasini bosing.</i>`;
+
+  const keyboard = [
+    [
+      btn({
+        text: "📤 Do'stlarga ulashish",
+        url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(
+          "Bu botda foydali ta'lim materiallari bor, qo'shiling!"
+        )}`,
+        style: 'primary',
+      }),
+    ],
+    [btn({ text: '✅ Tekshirish', callback_data: 'md_check_referral', style: 'success' })],
+  ];
+
+  return { text, keyboard };
+}
+
 function monaTiliDatesScreen() {
   const text =
     `${emoji(EMOJI.monaTiliDateIcon, '📅')} <b>Majburiy Ona tili</b>\n\n` +
@@ -664,9 +764,31 @@ bot.onText(/^\/pdflist/, async (msg) => {
   }
 });
 
-bot.onText(/^\/start/, async (msg) => {
+bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   const userId = msg.from.id;
   const chatType = msg.chat.type;
+  const startPayload = match && match[1] ? match[1] : null;
+
+  // Referal orqali kirgan bo'lsa — taklif qiluvchiga hisoblanadi
+  // (faqat shaxsiy chatda, o'zini-o'zi taklif qilish va qayta hisoblash oldini olinadi)
+  if (chatType === 'private' && startPayload && startPayload.startsWith('ref_')) {
+    const referrerId = startPayload.replace('ref_', '');
+    if (referrerId) {
+      const added = addReferral(referrerId, userId);
+      if (added) {
+        try {
+          await bot.sendMessage(
+            referrerId,
+            `🎉 <b>Tabriklaymiz!</b> Sizning havolangiz orqali yangi foydalanuvchi botga qo'shildi.\n\n` +
+              `📊 Jami taklif qilganlaringiz: <b>${getReferralCount(referrerId)}/${REQUIRED_REFERRALS}</b>`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          console.error('Referal xabarini yuborishda xatolik:', err.message);
+        }
+      }
+    }
+  }
 
   // Guruhda — obuna tekshiruvisiz, premium-siz
   if (chatType === 'group' || chatType === 'supergroup') {
@@ -784,7 +906,8 @@ bot.on('message', async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
-// "Majburiy Ona tili" tugmasi — foydalanuvchiga kunlar ro'yxati ko'rsatiladi
+// "Majburiy Ona tili" tugmasi — avval referal tekshiriladi, keyin kunlar
+// ro'yxati ko'rsatiladi
 // ---------------------------------------------------------------------------
 bot.on('message', async (msg) => {
   if (msg.web_app_data) return;
@@ -795,6 +918,15 @@ bot.on('message', async (msg) => {
   msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
 
   const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!hasEnoughReferrals(userId)) {
+    const link = await buildReferralLink(userId);
+    const { text, keyboard } = referralGateScreen(userId, link);
+    await safeSend(chatId, text, keyboard);
+    return;
+  }
+
   const { text, keyboard } = monaTiliDatesScreen();
   await safeSend(chatId, text, keyboard);
 });
@@ -1028,6 +1160,51 @@ bot.on('callback_query', async (query) => {
         console.error('answerCallbackQuery xatosi:', err.message);
       }
     }
+    return;
+  }
+
+  // Referal holatini qayta tekshirish
+  if (query.data === 'md_check_referral') {
+    if (hasEnoughReferrals(userId)) {
+      try {
+        await bot.answerCallbackQuery(query.id, { text: "✅ Tabriklaymiz, ochildi!" });
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+      await deleteMessageSafe(chatId, messageId);
+      const { text, keyboard } = monaTiliDatesScreen();
+      await safeSend(chatId, text, keyboard);
+    } else {
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: "❌ Hali yetarli emas. Do'stingizni taklif qiling.",
+          show_alert: true,
+        });
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+      const link = await buildReferralLink(userId);
+      const { text, keyboard } = referralGateScreen(userId, link);
+      await safeEdit(chatId, messageId, text, keyboard);
+    }
+    return;
+  }
+
+  // "Majburiy Ona tili" oqimidagi boshqa barcha tugmalar uchun referal himoyasi
+  // (masalan, foydalanuvchida eski, tekshiruvdan oldingi klaviatura qolib ketgan bo'lsa)
+  if (query.data && query.data.startsWith('md_') && !hasEnoughReferrals(userId)) {
+    await deleteMessageSafe(chatId, messageId);
+    try {
+      await bot.answerCallbackQuery(query.id, {
+        text: "❌ Avval kamida 1 ta do'stingizni taklif qiling.",
+        show_alert: true,
+      });
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    const link = await buildReferralLink(userId);
+    const { text, keyboard } = referralGateScreen(userId, link);
+    await safeSend(chatId, text, keyboard);
     return;
   }
 
