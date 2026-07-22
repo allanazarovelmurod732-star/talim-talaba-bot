@@ -36,7 +36,17 @@ const SOON_STICKER_ID =
 // "Majburiy Ona tili" PDF bazasi — oddiy JSON fayl orqali saqlanadi
 // Kalit format: "18_1" (18-iyul, 1-smena) -> Telegram file_id
 // ---------------------------------------------------------------------------
-const DATA_DIR = path.join(__dirname, 'data');
+// DATA_DIR — PDF va referal ma'lumotlari saqlanadigan joy.
+// Agar hostingda "persistent disk/volume" bo'lsa, .env fayliga
+// DATA_DIR=/path/to/persistent/folder qo'shib, ma'lumotlarni shu doimiy
+// diskka yo'naltiring — aks holda deploy/restart vaqtida ular o'chib ketishi mumkin.
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  console.log(`[DATA] Ma'lumotlar shu papkada saqlanadi: ${DATA_DIR}`);
+} catch (err) {
+  console.error("[DATA] Ma'lumotlar papkasini tayyorlashda xatolik:", err.message);
+}
 const PDF_DB_PATH = path.join(DATA_DIR, 'mona_tili_pdfs.json');
 
 function loadPdfDb() {
@@ -405,7 +415,7 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
   return button;
 }
 
-const backRow = [btn({ text: '⬅️ Orqaga', callback_data: 'menu_back', icon: EMOJI.backIcon })];
+const backRow = [btn({ text: 'Orqaga', callback_data: 'menu_back', icon: EMOJI.backIcon })];
 
 // ---------------------------------------------------------------------------
 // "Seni kim yaratgan?" kabi savollarga 100% aniq, o'zgarmas javob
@@ -596,7 +606,7 @@ function referralGateScreen(userId, link) {
   const keyboard = [
     [
       btn({
-        text: "📤 Do'stlarga ulashish",
+        text: "Do'stlarga ulashish",
         url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(
           "Bu botda foydali ta'lim materiallari bor, qo'shiling!"
         )}`,
@@ -604,7 +614,7 @@ function referralGateScreen(userId, link) {
         icon: EMOJI.shareIcon,
       }),
     ],
-    [btn({ text: '✅ Tekshirish', callback_data: 'md_check_referral', style: 'success', icon: EMOJI.checkIcon })],
+    [btn({ text: 'Tekshirish', callback_data: 'md_check_referral', style: 'success', icon: EMOJI.checkIcon })],
   ];
 
   return { text, keyboard };
@@ -630,7 +640,7 @@ function monaTiliSmenaScreen(dateLabel, dateKey) {
   const keyboard = [
     [btn({ text: '1-smena', callback_data: `md_smena_1_${dateKey}`, style: 'primary', icon: EMOJI.smena1Icon })],
     [btn({ text: '2-smena', callback_data: `md_smena_2_${dateKey}`, style: 'success', icon: EMOJI.smena2Icon })],
-    [btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })],
+    [btn({ text: 'Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })],
   ];
 
   return { text, keyboard };
@@ -641,7 +651,7 @@ function monaTiliSoonScreen() {
     `${emoji(EMOJI.monaTiliSoonIcon, '🔜')} <b>Tez kunda!</b>\n\n` +
     `23-iyul kuni uchun material hali tayyorlanmoqda.`;
 
-  const keyboard = [[btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })]];
+  const keyboard = [[btn({ text: 'Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })]];
 
   return { text, keyboard };
 }
