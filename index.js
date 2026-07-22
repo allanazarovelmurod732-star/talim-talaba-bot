@@ -25,6 +25,14 @@ if (!BOT_TOKEN) {
 const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: false } });
 
 // ---------------------------------------------------------------------------
+// Stikerlar
+// ---------------------------------------------------------------------------
+const GREETING_STICKER_ID =
+  'CAACAgIAAxkBAAEgvKVqYLQXonir0ZoEH8vO88MM9iAHigAC4lEAAgF6EEsLnWR0Hxx9Lj0E';
+const SOON_STICKER_ID =
+  'CAACAgEAAxkBAAEgvJNqYLGY0aCXRX9JqTOsLSlQeaEgkgAC_AEAAqHoMETtlcN69zhxMD0E';
+
+// ---------------------------------------------------------------------------
 // "Majburiy Ona tili" PDF bazasi — oddiy JSON fayl orqali saqlanadi
 // Kalit format: "18_1" (18-iyul, 1-smena) -> Telegram file_id
 // ---------------------------------------------------------------------------
@@ -344,6 +352,11 @@ const EMOJI = {
   smena1Icon: '5382322671679708881',
   smena2Icon: '5381990043642502553',
   monaTiliSoonIcon: '5282843764451195532',
+  giftIcon: '5449800250032143374',
+  statsIcon: '5384356403118886801',
+  linkIcon: '5271604874419647061',
+  pdfIcon: '5219922459205053449',
+  backIcon: '5411112567609243032',
 };
 
 // "Majburiy Ona tili" oqimidagi kunlar ro'yxati (callback_data uchun kalit -> nom)
@@ -573,9 +586,9 @@ function faqScreen() {
 function referralGateScreen(userId, link) {
   const count = getReferralCount(userId);
   const text =
-    `🎁 <b>Majburiy Ona tili</b> materiallarini ochish uchun kamida <b>${REQUIRED_REFERRALS} ta do'stingizni</b> botga taklif qiling!\n\n` +
-    `📊 Taklif qilganlaringiz: <b>${count}/${REQUIRED_REFERRALS}</b>\n\n` +
-    `🔗 <b>Sizning shaxsiy havolangiz:</b>\n<code>${link}</code>\n\n` +
+    `${emoji(EMOJI.giftIcon, '🎁')} <b>Majburiy Ona tili</b> materiallarini ochish uchun kamida <b>${REQUIRED_REFERRALS} ta do'stingizni</b> botga taklif qiling!\n\n` +
+    `${emoji(EMOJI.statsIcon, '📊')} Taklif qilganlaringiz: <b>${count}/${REQUIRED_REFERRALS}</b>\n\n` +
+    `${emoji(EMOJI.linkIcon, '🔗')} <b>Sizning shaxsiy havolangiz:</b>\n<code>${link}</code>\n\n` +
     `<i>Do'stingiz shu havola orqali botga /start bosishi bilanoq hisoblanadi. Shundan so'ng pastdagi "Tekshirish" tugmasini bosing.</i>`;
 
   const keyboard = [
@@ -614,7 +627,7 @@ function monaTiliSmenaScreen(dateLabel, dateKey) {
   const keyboard = [
     [btn({ text: '1-smena', callback_data: `md_smena_1_${dateKey}`, style: 'primary', icon: EMOJI.smena1Icon })],
     [btn({ text: '2-smena', callback_data: `md_smena_2_${dateKey}`, style: 'success', icon: EMOJI.smena2Icon })],
-    [btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger' })],
+    [btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })],
   ];
 
   return { text, keyboard };
@@ -625,7 +638,7 @@ function monaTiliSoonScreen() {
     `${emoji(EMOJI.monaTiliSoonIcon, '🔜')} <b>Tez kunda!</b>\n\n` +
     `23-iyul kuni uchun material hali tayyorlanmoqda.`;
 
-  const keyboard = [[btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger' })]];
+  const keyboard = [[btn({ text: '⬅️ Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })]];
 
   return { text, keyboard };
 }
@@ -810,6 +823,12 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
     return;
   }
 
+  try {
+    await bot.sendSticker(msg.chat.id, GREETING_STICKER_ID);
+  } catch (err) {
+    console.error('Salomlashish stikerini yuborishda xatolik:', err.message);
+  }
+
   await sendMainMenu(msg.chat.id);
 
   // MUHIM: Telegram cheklovi — mini ilova ichidagi "Fikr-mulohaza" formasi
@@ -831,7 +850,7 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   bottomKeyboardRows.push([
     {
       text: 'Majburiy Ona tili',
-      style: 'success',
+      style: 'danger',
       icon_custom_emoji_id: EMOJI.monaTiliButtonIcon,
     },
   ]);
@@ -1221,6 +1240,11 @@ bot.on('callback_query', async (query) => {
     }
 
     if (dateKey === '23') {
+      try {
+        await bot.sendSticker(chatId, SOON_STICKER_ID);
+      } catch (err) {
+        console.error('"Tez kunda" stikerini yuborishda xatolik:', err.message);
+      }
       const { text, keyboard } = monaTiliSoonScreen();
       await safeSend(chatId, text, keyboard);
     } else {
@@ -1273,7 +1297,7 @@ bot.on('callback_query', async (query) => {
 
     try {
       await bot.sendDocument(chatId, fileId, {
-        caption: `📄 <b>${dateLabel} — ${smena}-smena</b>`,
+        caption: `${emoji(EMOJI.pdfIcon, '📄')} <b>${dateLabel} — ${smena}-smena</b>`,
         parse_mode: 'HTML',
       });
     } catch (err) {
