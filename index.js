@@ -13,6 +13,10 @@ const MINI_APP_URL = process.env.MINI_APP_URL || '';
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+// "Tezkor AI" (Mandat tanlash natijasi ostidagi tugma) uchun Hugging Face tokeni
+// MUHIM: token faqat .env / hosting Environment Variables orqali beriladi —
+// bu yerga hech qachon haqiqiy tokenni yozib qo'ymang (Git'ga tushib qolishi mumkin).
+const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY || '';
 // Mini ilovadagi "Fikr-mulohaza" formasidan kelgan xabarlar shu chatga yuboriladi
 // (bo'lmasa, faqat konsolga yoziladi)
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
@@ -267,6 +271,51 @@ async function askAI(userMessage, replyContext) {
   }
 
   return "AI javob bera olmadi. Keyinroq urinib ko'ring.";
+}
+
+// ---------------------------------------------------------------------------
+// "Tezkor AI" — Mandat tanlash natijasi ostidagi tugma. Hugging Face
+// Inference Providers (OpenAI-compatible router) orqali tanlangan fanlar
+// majmuasi va DTM balliga qarab, taxminan qaysi yo'nalish/universitetga
+// kirish mumkinligi haqida qisqa AI izoh oladi.
+// ---------------------------------------------------------------------------
+const HUGGINGFACE_API_URL = 'https://router.huggingface.co/v1/chat/completions';
+const HUGGINGFACE_MODEL = 'meta-llama/Llama-3.1-8B-Instruct';
+
+async function askHuggingFaceMandatEstimate(subject, ball) {
+  if (!HUGGINGFACE_API_KEY) return null;
+
+  const prompt =
+    `Sen O'zbekistondagi oliy ta'lim tizimi bo'yicha maslahatchi AI'san. ` +
+    `Abituriyentning fanlar majmuasi: "${subject}", DTM (Davlat Test Markazi) balli: ${ball}. ` +
+    `Shu ma'lumotlarga asoslanib, u taxminan qaysi yo'nalish(lar)ga va qaysi darajadagi ` +
+    `(nufuzli/oddiy) universitetlarga, grant yoki kontrakt asosida kira olishi mumkinligini ` +
+    `qisqa (4-6 gap), aniq va tushunarli o'zbek tilida taxmin qilib ber. ` +
+    `Oxirida bu faqat AI'ning taxminiy bahosi ekanini, rasmiy natija emasligini bir gapda eslat.`;
+
+  const res = await fetch(HUGGINGFACE_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: HUGGINGFACE_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 500,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`HuggingFace API ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text) throw new Error("HuggingFace bo'sh javob qaytardi");
+  return text.trim();
 }
 
 // Telegram'dan kelgan rasmni (file_id) yuklab, base64 formatga o'giradi
@@ -705,6 +754,8 @@ const MANDAT_SUBJECT_OPTIONS = [
 const awaitingMandatCustomSubject = new Set();
 // Fanlar majmuasi tanlangandan keyin, ball kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> fanlar majmuasi matni)
 const pendingMandatSubject = new Map();
+// "⚡ Tezkor AI" tugmasi bosilganda kerak bo'ladigan oxirgi fanlar majmuasi + ball (userId -> {subject, ball})
+const pendingHfEstimate = new Map();
 
 function estimateMandatText(ball) {
   for (const tier of MANDAT_TIERS) {
@@ -1106,10 +1157,17 @@ bot.on('message', async (msg) => {
     `🔗 mandat.uzbmb.uz\n` +
     `🔗 talabaa.uz/kirish-ballari`;
 
+  pendingHfEstimate.set(userId, { subject, ball });
+
   try {
     await bot.sendMessage(msg.chat.id, resultText, {
       parse_mode: 'HTML',
       disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: [
+          [btn({ text: '⚡ Tezkor AI', callback_data: 'hf_ai_estimate', style: 'primary' })],
+        ],
+      },
     });
   } catch (err) {
     console.error('Mandat natijasini yuborishda xatolik:', err.message);
@@ -1416,6 +1474,76 @@ bot.on('callback_query', async (query) => {
       );
     } catch (err) {
       console.error('Fanlar majmuasi so\'rash xabari xatosi:', err.message);
+    }
+    return;
+  }
+
+  // "⚡ Tezkor AI" — Mandat natijasi ostidagi tugma: Hugging Face AI orqali
+  // fanlar majmuasi + ball asosida taxminiy yo'nalish/universitet bahosi
+  if (query.data === 'hf_ai_estimate') {
+    const pending = pendingHfEstimate.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    if (!pending) {
+      try {
+        await bot.sendMessage(
+          chatId,
+          "❗️ Avval \"Mandat tanlash\" bo'limida fanlar majmuasi va DTM balingizni kiriting."
+        );
+      } catch (err) {
+        console.error('hf_ai_estimate: pending topilmadi xabari xatosi:', err.message);
+      }
+      return;
+    }
+
+    try {
+      await bot.sendChatAction(chatId, 'typing');
+    } catch (err) {
+      console.error('sendChatAction xatosi:', err.message);
+    }
+
+    let thinkingMsgId = null;
+    try {
+      const thinkingMsg = await bot.sendMessage(chatId, '🤖 Tezkor AI tahlil qilmoqda...');
+      thinkingMsgId = thinkingMsg.message_id;
+    } catch (err) {
+      console.error("Tezkor AI 'o'ylamoqda' xabari xatosi:", err.message);
+    }
+
+    let aiText;
+    try {
+      aiText = await askHuggingFaceMandatEstimate(pending.subject, pending.ball);
+    } catch (err) {
+      console.error('Tezkor AI (HuggingFace) xatosi:', err.message);
+    }
+
+    const resultHtml = aiText
+      ? `⚡ <b>Tezkor AI xulosasi</b>\n\n` +
+        `📚 Fanlar majmuasi: <b>${pending.subject}</b>\n` +
+        `🎯 Ball: <b>${pending.ball}</b>\n\n` +
+        `${aiText}`
+      : "❌ Tezkor AI hozircha javob bera olmadi. Birozdan so'ng qayta urinib ko'ring.";
+
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText(resultHtml, {
+          chat_id: chatId,
+          message_id: thinkingMsgId,
+          parse_mode: 'HTML',
+        });
+      } catch (err) {
+        console.error('Tezkor AI natijasini tahrirlashda xatolik:', err.message);
+      }
+    } else {
+      try {
+        await bot.sendMessage(chatId, resultHtml, { parse_mode: 'HTML' });
+      } catch (err) {
+        console.error('Tezkor AI natijasini yuborishda xatolik:', err.message);
+      }
     }
     return;
   }
