@@ -689,6 +689,23 @@ const MANDAT_MIN_FALLBACK_TEXT =
 // Foydalanuvchi hozir balini kiritishini kutayotgan bo'lsa, shu Set ichida turadi
 const awaitingMandatBall = new Set();
 
+// ---------------------------------------------------------------------------
+// "Mandat tanlash" — fanlar majmuasi bo'yicha admin bilan aniq maslahat oqimi
+// ---------------------------------------------------------------------------
+// Fanlar majmuasi tugmalari ro'yxati (kerak bo'lsa shu massivga qo'shib/o'zgartirib turing)
+const MANDAT_SUBJECT_OPTIONS = [
+  'Matematika + Fizika',
+  'Matematika + Chet tili',
+  'Kimyo + Biologiya',
+  'Tarix + Chet tili',
+  'Matematika + Tarix',
+];
+
+// Foydalanuvchi o'zining fanlar majmuasini qo'lda yozayotganini kutayotgan bo'lsak, shu Set ichida turadi
+const awaitingMandatCustomSubject = new Set();
+// Fanlar majmuasi tanlangandan keyin, ball kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> fanlar majmuasi matni)
+const pendingMandatSubject = new Map();
+
 function estimateMandatText(ball) {
   for (const tier of MANDAT_TIERS) {
     if (ball >= tier.min) return tier.text;
@@ -699,20 +716,32 @@ function estimateMandatText(ball) {
 function mandatScreen() {
   const text =
     `🎯 <b>Mandat tanlash</b>\n\n` +
-    `DTM balingizni kiriting — men sizga <b>taxminiy</b> ravishda qaysi turdagi ` +
-    `o'rinlarga (grant/kontrakt) mos kelishingiz mumkinligini aytib beraman.\n\n` +
-    `<i>Eslatma: bu — rasmiy minimal chegaralarga asoslangan taxminiy hisob-kitob, aniq universitet ` +
-    `yoki yo'nalish bo'yicha emas. Aniq va yangilangan o'tish ballarini quyidagi rasmiy manbalardan ` +
-    `tekshirishni unutmang:</i>\n` +
-    `🔗 mandat.uzbmb.uz\n` +
-    `🔗 talabaa.uz/kirish-ballari`;
+    `Fanlar majmuangizni tanlang 👇\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosib, o'zingiz yozishingiz mumkin.</i>`;
 
-  const keyboard = [
-    [btn({ text: "✍️ Ballimni kiritish", callback_data: 'mandat_enter', style: 'primary' })],
-    backRow,
-  ];
+  const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
+    btn({ text: subject, callback_data: `mandat_subj_${i}`, style: 'primary' }),
+  ]);
+  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'mandat_subj_custom', style: 'success' })]);
+  keyboard.push(backRow);
 
   return { text, keyboard };
+}
+
+// Fanlar majmuasi tanlangandan (yoki yozilgandan) keyin DTM balini so'raydi
+async function askForMandatBall(chatId, userId, subject) {
+  pendingMandatSubject.set(userId, subject);
+  awaitingMandatBall.add(userId);
+  try {
+    await bot.sendMessage(
+      chatId,
+      `✅ Fanlar majmuasi: <b>${subject}</b>\n\n` +
+        `🔢 Endi DTM balingizni raqam bilan yozing (masalan: <b>154.5</b>):`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    console.error('Mandat ball so\'rash xabari xatosi:', err.message);
+  }
 }
 
 function monaTiliSoonScreen() {
@@ -1064,10 +1093,13 @@ bot.on('message', async (msg) => {
   }
 
   awaitingMandatBall.delete(userId);
+  const subject = pendingMandatSubject.get(userId) || 'Kiritilmagan';
+  pendingMandatSubject.delete(userId);
 
   const estimateText = estimateMandatText(ball);
   const resultText =
-    `🎯 <b>Balingiz: ${ball}</b>\n\n${estimateText}\n\n` +
+    `🎯 <b>Balingiz: ${ball}</b>\n` +
+    `📚 <b>Fanlar majmuasi:</b> ${subject}\n\n${estimateText}\n\n` +
     `<i>Eslatma: bu natija rasmiy minimal chegaralarga asoslangan taxminiy hisob-kitob, aniq universitet ` +
     `yoki yo'nalish bo'yicha emas — har birining o'tish balli boshqacha bo'lishi mumkin. To'liq va ` +
     `yangilangan ma'lumot uchun:</i>\n` +
@@ -1082,6 +1114,72 @@ bot.on('message', async (msg) => {
   } catch (err) {
     console.error('Mandat natijasini yuborishda xatolik:', err.message);
   }
+
+  // Aniq qaysi yo'nalish(lar)ga kira olishi haqida shaxsiy javob olishi uchun
+  // so'rovni adminga yuboramiz va foydalanuvchiga kutish haqida xabar beramiz
+  const from = msg.from;
+  const fromLabel = from.username ? `@${from.username}` : `${from.first_name || ''} (ID: ${from.id})`;
+
+  if (ADMIN_CHAT_ID) {
+    try {
+      const sentToAdmin = await bot.sendMessage(
+        ADMIN_CHAT_ID,
+        `🎯 <b>Yangi mandat so'rovi</b>\n\n` +
+          `👤 ${fromLabel}\n` +
+          `📚 Fanlar majmuasi: <b>${subject}</b>\n` +
+          `🔢 DTM balli: <b>${ball}</b>\n\n` +
+          `<i>Ushbu xabarga "Reply" qilib, foydalanuvchiga qaysi yo'nalish(lar)ga kira olishi haqida javob yozing — ` +
+          `javobingiz avtomatik shu foydalanuvchiga yetkaziladi.</i>\n` +
+          `🆔 <code>${msg.chat.id}</code>`,
+        { parse_mode: 'HTML' }
+      );
+      feedbackReplyMap.set(sentToAdmin.message_id, msg.chat.id);
+    } catch (err) {
+      console.error('Mandat so\'rovini adminga yuborishda xatolik:', err.message);
+    }
+  } else {
+    console.log(`[MANDAT SO'ROVI] ${fromLabel} — ${subject} — ball: ${ball}`);
+  }
+
+  try {
+    await bot.sendMessage(
+      msg.chat.id,
+      `⏳ So'rovingiz qabul qilindi. Aniq qaysi yo'nalish(lar)ga kira olishingiz haqida ` +
+        `<b>iltimos, admin javobini kuting</b> — tez orada shaxsan javob beramiz.`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    console.error("Mandat kutish xabarini yuborishda xatolik:", err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// "Mandat tanlash" — foydalanuvchi o'zining fanlar majmuasini qo'lda yozganda
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaitingMandatCustomSubject.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const subject = msg.text.trim();
+  awaitingMandatCustomSubject.delete(userId);
+
+  if (!subject) {
+    awaitingMandatCustomSubject.add(userId);
+    try {
+      await bot.sendMessage(msg.chat.id, '❗️ Iltimos, fanlar majmuasini matn ko\'rinishida yozing.');
+    } catch (err) {
+      console.error('Fanlar majmuasi validatsiya xabari xatosi:', err.message);
+    }
+    return;
+  }
+
+  await askForMandatBall(msg.chat.id, userId, subject);
 });
 
 // ---------------------------------------------------------------------------
@@ -1286,9 +1384,24 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // "Mandat tanlash" — foydalanuvchi ball kiritishni boshlaydi
-  if (query.data === 'mandat_enter') {
-    awaitingMandatBall.add(userId);
+  // "Mandat tanlash" — foydalanuvchi ro'yxatdan fanlar majmuasini tanladi
+  if (query.data && query.data.startsWith('mandat_subj_') && query.data !== 'mandat_subj_custom') {
+    const index = parseInt(query.data.replace('mandat_subj_', ''), 10);
+    const subject = MANDAT_SUBJECT_OPTIONS[index];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    if (!subject) return;
+    await askForMandatBall(chatId, userId, subject);
+    return;
+  }
+
+  // "Mandat tanlash" — foydalanuvchi o'zi fanlar majmuasini yozmoqchi
+  if (query.data === 'mandat_subj_custom') {
+    awaitingMandatCustomSubject.add(userId);
     try {
       await bot.answerCallbackQuery(query.id);
     } catch (err) {
@@ -1298,11 +1411,11 @@ bot.on('callback_query', async (query) => {
     try {
       await bot.sendMessage(
         chatId,
-        "🔢 Iltimos, DTM balingizni raqam bilan yozing (masalan: <b>154.5</b>):",
+        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
         { parse_mode: 'HTML' }
       );
     } catch (err) {
-      console.error('Mandat ball so\'rash xabari xatosi:', err.message);
+      console.error('Fanlar majmuasi so\'rash xabari xatosi:', err.message);
     }
     return;
   }
