@@ -507,6 +507,7 @@ function mainMenuScreen() {
     [btn({ text: 'Test Platformamiz', callback_data: 'menu_test', icon: EMOJI.testMenuIcon, style: 'success' })],
     [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
     [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
+    [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_mandat', style: 'success' })],
   ];
 
   if (MINI_APP_URL) {
@@ -646,6 +647,74 @@ function monaTiliSmenaScreen(dateLabel, dateKey) {
   return { text, keyboard };
 }
 
+// ---------------------------------------------------------------------------
+// "Mandat tanlash" — foydalanuvchi DTM balini kiritadi, bot rasmiy e'lon
+// qilingan MINIMAL o'tish ballari asosida taxminiy natija beradi.
+//
+// MUHIM: Bu real vaqtda biror saytdan (masalan mandat.uzbmb.uz, talabaa.uz)
+// avtomatik o'qib olinmaydi — bu saytlarning aniq kalkulyatori faqat
+// login qilingan foydalanuvchiga ochiladi, shuning uchun undan avtomatik
+// "scraping" qilish ishonchsiz va noto'g'ri bo'lar edi. O'rniga quyidagi
+// chegaralar Davlat test markazi tomonidan rasmiy e'lon qilingan MINIMAL
+// ballarga asoslangan. Rasmiy raqamlar har yili o'zgarishi mumkin —
+// yangi yil e'lon qilinganda shu MANDAT_TIERS massivini yangilab turing.
+// ---------------------------------------------------------------------------
+const MANDAT_TIERS = [
+  {
+    min: 94.5,
+    text:
+      "✅ Balingiz yuqori! Taxminan, deyarli barcha yo'nalishlarda — jumladan " +
+      "<b>tibbiyot, huquq, biznes va boshqaruv</b> kabi eng talabgir sohalarda ham — " +
+      "<b>grant</b>ga da'vogar bo'la olasiz.",
+  },
+  {
+    min: 75.6,
+    text:
+      "🎓 Ushbu ball bilan aksariyat oddiy yo'nalishlarda <b>grant</b>ga, " +
+      "imtiyozli (tibbiyot, huquq, biznes, boshqaruv) yo'nalishlarda esa ko'proq " +
+      "<b>kontrakt</b> asosida o'qishga taxminan mos kelasiz.",
+  },
+  {
+    min: 66.5,
+    text:
+      "📌 Bu ball bilan aksariyat yo'nalishlarda <b>kontrakt</b> asosida o'qish imkoniyati yuqori. " +
+      "Talabgir bo'lmagan ba'zi yo'nalishlarda grantga ham urinib ko'rsangiz bo'ladi.",
+  },
+];
+const MANDAT_MIN_FALLBACK_TEXT =
+  "⚠️ Afsuski, bu ball rasmiy e'lon qilingan minimal chegaralardan past bo'lishi mumkin. " +
+  "Hozircha aniq bir yo'nalishga taxminiy kirish imkoniyati past ko'rinmoqda — keyingi safar " +
+  "tayyorgarlikni kuchaytiring 💪.";
+
+// Foydalanuvchi hozir balini kiritishini kutayotgan bo'lsa, shu Set ichida turadi
+const awaitingMandatBall = new Set();
+
+function estimateMandatText(ball) {
+  for (const tier of MANDAT_TIERS) {
+    if (ball >= tier.min) return tier.text;
+  }
+  return MANDAT_MIN_FALLBACK_TEXT;
+}
+
+function mandatScreen() {
+  const text =
+    `🎯 <b>Mandat tanlash</b>\n\n` +
+    `DTM balingizni kiriting — men sizga <b>taxminiy</b> ravishda qaysi turdagi ` +
+    `o'rinlarga (grant/kontrakt) mos kelishingiz mumkinligini aytib beraman.\n\n` +
+    `<i>Eslatma: bu — rasmiy minimal chegaralarga asoslangan taxminiy hisob-kitob, aniq universitet ` +
+    `yoki yo'nalish bo'yicha emas. Aniq va yangilangan o'tish ballarini quyidagi rasmiy manbalardan ` +
+    `tekshirishni unutmang:</i>\n` +
+    `🔗 mandat.uzbmb.uz\n` +
+    `🔗 talabaa.uz/kirish-ballari`;
+
+  const keyboard = [
+    [btn({ text: "✍️ Ballimni kiritish", callback_data: 'mandat_enter', style: 'primary' })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
 function monaTiliSoonScreen() {
   const text =
     `${emoji(EMOJI.monaTiliSoonIcon, '🔜')} <b>Tez kunda!</b>\n\n` +
@@ -662,6 +731,7 @@ const SCREENS = {
   menu_test: testScreen,
   menu_founder: founderScreen,
   menu_faq: faqScreen,
+  menu_mandat: mandatScreen,
 };
 
 // ---------------------------------------------------------------------------
@@ -964,6 +1034,57 @@ bot.on('message', async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
+// "Mandat tanlash" — foydalanuvchi yuborgan DTM balini qabul qilib, taxminiy
+// natijani qaytaradi
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaitingMandatBall.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const raw = msg.text.trim().replace(',', '.');
+  const ball = parseFloat(raw);
+
+  if (isNaN(ball) || ball < 0 || ball > 189) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "❗️ Iltimos, to'g'ri raqam kiriting (0 dan 189 gacha), masalan: <b>154.5</b>",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('Mandat ball validatsiya xabari xatosi:', err.message);
+    }
+    return; // holat saqlanadi — foydalanuvchi qayta urinishi mumkin
+  }
+
+  awaitingMandatBall.delete(userId);
+
+  const estimateText = estimateMandatText(ball);
+  const resultText =
+    `🎯 <b>Balingiz: ${ball}</b>\n\n${estimateText}\n\n` +
+    `<i>Eslatma: bu natija rasmiy minimal chegaralarga asoslangan taxminiy hisob-kitob, aniq universitet ` +
+    `yoki yo'nalish bo'yicha emas — har birining o'tish balli boshqacha bo'lishi mumkin. To'liq va ` +
+    `yangilangan ma'lumot uchun:</i>\n` +
+    `🔗 mandat.uzbmb.uz\n` +
+    `🔗 talabaa.uz/kirish-ballari`;
+
+  try {
+    await bot.sendMessage(msg.chat.id, resultText, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+  } catch (err) {
+    console.error('Mandat natijasini yuborishda xatolik:', err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Admin PDF yuklash — "Majburiy Ona tili" bazasiga PDF qo'shish
 // Admin ADMIN_CHAT_ID chatiga PDF faylni quyidagi formatdagi izoh (caption) bilan
 // yuborsa, u avtomatik bazaga saqlanadi (Reply emas, oddiy yangi xabar sifatida):
@@ -1161,6 +1282,27 @@ bot.on('callback_query', async (query) => {
       });
     } catch (err) {
       console.error('show_phone answerCallbackQuery xatosi:', err.message);
+    }
+    return;
+  }
+
+  // "Mandat tanlash" — foydalanuvchi ball kiritishni boshlaydi
+  if (query.data === 'mandat_enter') {
+    awaitingMandatBall.add(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    try {
+      await bot.sendMessage(
+        chatId,
+        "🔢 Iltimos, DTM balingizni raqam bilan yozing (masalan: <b>154.5</b>):",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('Mandat ball so\'rash xabari xatosi:', err.message);
     }
     return;
   }
