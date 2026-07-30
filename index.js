@@ -171,17 +171,25 @@ function normalizeText(s) {
 
 // Foydalanuvchi tanlagan/yozgan fanlar majmuasiga ("Matematika + Fizika" kabi)
 // mos keladigan yo'nalishlarni qidiradi — bazadagi "fanlar" maydoni bilan
-// solishtiradi. "+" bo'yicha bo'lib, har bir fan nomi mavjudligini tekshiradi,
-// shuning uchun fanlar tartibi yoki yozilishi biroz farq qilsa ham topadi.
+// solishtiradi. Fanlar soni va TARTIBI aniq mos kelishi shart (masalan
+// "Biologiya + Kimyo" so'ralsa, faylda "Kimyo, Biologiya" tartibida
+// yozilgan yo'nalishlar endi mos deb hisoblanmaydi).
 function subjectMatches(itemFanlar, subjectQuery) {
-  const itemNorm = normalizeText(itemFanlar || '');
-  if (!itemNorm) return false;
+  const itemArr = Array.isArray(itemFanlar)
+    ? itemFanlar
+    : String(itemFanlar || '').split(',');
+  const itemNorm = itemArr.map(normalizeText).filter(Boolean);
+  if (!itemNorm.length) return false;
+
   const parts = String(subjectQuery)
     .split('+')
     .map((p) => normalizeText(p))
     .filter(Boolean);
   if (!parts.length) return false;
-  return parts.every((p) => itemNorm.includes(p));
+
+  // Fanlar soni bir xil bo'lishi va har bir pozitsiyada mos kelishi shart
+  if (parts.length !== itemNorm.length) return false;
+  return parts.every((p, i) => itemNorm[i].includes(p));
 }
 
 function searchYonalishBySubject(subject) {
