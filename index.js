@@ -229,6 +229,47 @@ function recordBaho(userId, rating) {
   return { ok: true, remaining: BAHO_KUNLIK_LIMIT - rec.countToday };
 }
 
+// ---------------------------------------------------------------------------
+// Barcha foydalanuvchilar ro'yxati — "hammaga xabar yuborish" (broadcast)
+// uchun. Foydalanuvchi shaxsiy chatda /start bosganda shu ro'yxatga qo'shiladi.
+// ---------------------------------------------------------------------------
+const USERS_DB_PATH = path.join(DATA_DIR, 'users.json');
+
+// Set<string> — userId (= shaxsiy chat id) lar
+let USERS_DB = new Set();
+
+function loadUsersDb() {
+  try {
+    const raw = fs.readFileSync(USERS_DB_PATH, 'utf8');
+    const arr = JSON.parse(raw);
+    USERS_DB = new Set(arr.map(String));
+    console.log(`[USERS] ${USERS_DB.size} ta foydalanuvchi yuklandi.`);
+  } catch (err) {
+    USERS_DB = new Set();
+  }
+}
+loadUsersDb();
+
+function saveUsersDb() {
+  try {
+    fs.writeFileSync(USERS_DB_PATH, JSON.stringify([...USERS_DB], null, 2), 'utf8');
+  } catch (err) {
+    console.error('[USERS] Saqlashda xatolik:', err.message);
+  }
+}
+
+function registerUser(userId) {
+  const key = String(userId);
+  if (!USERS_DB.has(key)) {
+    USERS_DB.add(key);
+    saveUsersDb();
+  }
+}
+
+// Admin /xabar (reply qilib) yuborgandan keyin, tasdiqlash kutilayotgan
+// broadcast ma'lumoti shu yerda vaqtincha turadi (bir vaqtda bittasi)
+let pendingBroadcast = null; // { fromChatId, messageId }
+
 // Matnni solishtirish uchun kichik harfga o'tkazadi, tirnoqlarni va ortiqcha
 // bo'shliqlarni tozalaydi
 function normalizeText(s) {
@@ -1276,6 +1317,54 @@ bot.onText(/^\/id/, async (msg) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Admin uchun: "/xabar" — biror xabarga "Reply" qilib shu buyruqni yozsa,
+// o'sha xabar botdan foydalangan BARCHA foydalanuvchilarga yuboriladi
+// (matn, rasm, video, fayl — qanday bo'lsa, xuddi shunday nusxalanadi).
+// Xavfsizlik uchun avval tasdiqlash so'raladi.
+// ---------------------------------------------------------------------------
+bot.onText(/^\/xabar/, async (msg) => {
+  if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+
+  if (!msg.reply_to_message) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "⚠️ Yubormoqchi bo'lgan xabaringizga (matn, rasm, video, fayl — nima bo'lsa ham) \"Reply\" qilib, shu ostiga <code>/xabar</code> deb yozing.",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('/xabar xatosi:', err.message);
+    }
+    return;
+  }
+
+  pendingBroadcast = {
+    fromChatId: msg.reply_to_message.chat.id,
+    messageId: msg.reply_to_message.message_id,
+  };
+
+  try {
+    await bot.sendMessage(
+      msg.chat.id,
+      `📢 Ushbu xabar <b>${USERS_DB.size}</b> ta foydalanuvchiga yuborilsinmi?`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Ha, yubor', callback_data: 'broadcast_confirm' },
+              { text: '❌ Bekor qilish', callback_data: 'broadcast_cancel' },
+            ],
+          ],
+        },
+      }
+    );
+  } catch (err) {
+    console.error('/xabar tasdiqlash xabari xatosi:', err.message);
+  }
+});
+
 bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   const userId = msg.from.id;
   const chatType = msg.chat.type;
@@ -1287,6 +1376,7 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   }
 
   // Shaxsiy chatda — obuna tekshiruvi bilan
+  registerUser(msg.chat.id);
   let subscribed = true;
   try {
     subscribed = await isSubscribedToAll(userId);
@@ -1681,6 +1771,68 @@ bot.on('callback_query', async (query) => {
   const messageId = query.message.message_id;
   const userId = query.from.id;
   const isGroup = ['group', 'supergroup'].includes(query.message.chat.type);
+
+  // Admin — broadcast xabarni yuborishni bekor qilish
+  if (query.data === 'broadcast_cancel') {
+    pendingBroadcast = null;
+    try {
+      await bot.answerCallbackQuery(query.id, { text: 'Bekor qilindi.' });
+    } catch (err) {
+      console.error('broadcast_cancel answerCallbackQuery xatosi:', err.message);
+    }
+    try {
+      await bot.editMessageText("❌ Xabar yuborish bekor qilindi.", { chat_id: chatId, message_id: messageId });
+    } catch (err) {}
+    return;
+  }
+
+  // Admin — broadcast xabarni haqiqatan ham barcha foydalanuvchilarga yuborish
+  if (query.data === 'broadcast_confirm') {
+    if (!pendingBroadcast) {
+      try {
+        await bot.answerCallbackQuery(query.id, { text: "⚠️ Yuboriladigan xabar topilmadi.", show_alert: true });
+      } catch (err) {}
+      return;
+    }
+
+    const { fromChatId, messageId: srcMessageId } = pendingBroadcast;
+    pendingBroadcast = null;
+
+    try {
+      await bot.answerCallbackQuery(query.id, { text: '🚀 Yuborish boshlandi...' });
+    } catch (err) {
+      console.error('broadcast_confirm answerCallbackQuery xatosi:', err.message);
+    }
+    try {
+      await bot.editMessageText('🚀 Xabar yuborilmoqda, biroz kuting...', { chat_id: chatId, message_id: messageId });
+    } catch (err) {}
+
+    const targets = [...USERS_DB];
+    let sent = 0;
+    let failed = 0;
+
+    for (const targetId of targets) {
+      try {
+        await bot.copyMessage(targetId, fromChatId, srcMessageId);
+        sent += 1;
+      } catch (err) {
+        failed += 1;
+      }
+      // Telegram rate-limitiga tushib qolmaslik uchun har xabar orasida kichik pauza
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+
+    try {
+      await bot.sendMessage(
+        chatId,
+        `✅ Xabar yuborish yakunlandi.\n\n📨 Yuborildi: <b>${sent}</b>\n🚫 Yetkazilmadi: <b>${failed}</b>`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('broadcast yakuniy hisobot xatosi:', err.message);
+    }
+    return;
+  }
 
   // Telefon raqamini ko'rsatish
   if (query.data === 'show_phone') {
