@@ -96,20 +96,20 @@ function searchYonalish(query) {
   return YONALISH_FLAT.filter((item) => norm(item.nomi).includes(q));
 }
 
-// Natijalarni chiroyli matn qilib formatlaydi (Telegram xabar uzunligi cheklovi
-// tufayli ko'p bo'lsa, faqat birinchi MAX_RESULTS tasini ko'rsatadi)
-const MAX_YONALISH_RESULTS = 15;
+// Natijalarni chiroyli matn qilib, Telegram xabar uzunligi cheklovidan (4096 belgi)
+// oshib ketmasligi uchun bir nechta "bo'lak" (chunk) qilib qaytaradi
+const TELEGRAM_SAFE_CHUNK = 3500;
 
 function formatYonalishResults(query, results) {
   if (!results.length) {
-    return (
+    return [
       `❌ "<b>${query}</b>" bo'yicha hech narsa topilmadi.\n\n` +
-      `<i>Yo'nalish nomini boshqacharoq yozib ko'ring (masalan to'liq nomi bilan).</i>`
-    );
+        `<i>Yo'nalish nomini boshqacharoq yozib ko'ring (masalan to'liq nomi bilan).</i>`,
+    ];
   }
 
-  const shown = results.slice(0, MAX_YONALISH_RESULTS);
-  const lines = shown.map((r) => {
+  const header = `🔎 "<b>${query}</b>" bo'yicha topildi: <b>${results.length}</b> ta natija\n\n`;
+  const lines = results.map((r) => {
     return (
       `🏫 <b>${r.otm}</b>\n` +
       `📚 ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
@@ -118,13 +118,19 @@ function formatYonalishResults(query, results) {
     );
   });
 
-  let text = `🔎 "<b>${query}</b>" bo'yicha topildi: ${results.length} ta natija\n\n` + lines.join('\n\n');
-
-  if (results.length > MAX_YONALISH_RESULTS) {
-    text += `\n\n<i>... va yana ${results.length - MAX_YONALISH_RESULTS} ta. Aniqroq nom yozib qidiring.</i>`;
+  // Har bir bo'lakni TELEGRAM_SAFE_CHUNK dan oshmaydigan qilib yig'amiz
+  const chunks = [];
+  let current = header;
+  for (const line of lines) {
+    if (current.length + line.length + 2 > TELEGRAM_SAFE_CHUNK) {
+      chunks.push(current);
+      current = '';
+    }
+    current += (current ? '\n\n' : '') + line;
   }
+  if (current) chunks.push(current);
 
-  return text;
+  return chunks;
 }
 
 function loadPdfDb() {
@@ -1304,13 +1310,17 @@ bot.on('message', async (msg) => {
 
   const query = msg.text.trim();
   const results = searchYonalish(query);
-  const resultText = formatYonalishResults(query, results);
+  const chunks = formatYonalishResults(query, results);
 
   try {
-    await bot.sendMessage(msg.chat.id, resultText, {
-      parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: [backRow] },
-    });
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      await bot.sendMessage(msg.chat.id, chunks[i], {
+        parse_mode: 'HTML',
+        // Orqaga tugmasi faqat oxirgi xabarga qo'shiladi
+        reply_markup: isLast ? { inline_keyboard: [backRow] } : undefined,
+      });
+    }
   } catch (err) {
     console.error("Yo'nalish qidiruv natijasini yuborishda xatolik:", err.message);
   }
