@@ -228,20 +228,38 @@ const YONALISH_ITEMS_PER_PAGE = 5;
 const yonalishResultsState = new Map();
 
 // Berilgan ball bilan shu yo'nalishga (grant yoki kontrakt asosida) kirish
-// mumkinmi-yo'qmi va qaysi holat ekanini aniqlaydi
-function classifyYonalishItem(item, ball) {
+// mumkinmi-yo'qmi va qaysi holat ekanini aniqlaydi.
+// qabulTuri: 'grant' — faqat grant bo'yicha tekshiradi
+//            'kontrakt' — faqat kontrakt bo'yicha tekshiradi
+//            'both' (yoki berilmasa) — avval grant, bo'lmasa kontrakt bo'yicha tekshiradi
+function classifyYonalishItem(item, ball, qabulTuri) {
   const grantBall = item.grantBall !== undefined && item.grantBall !== null && item.grantBall !== '' ? Number(item.grantBall) : null;
   const kontraktBall = item.kontraktBall !== undefined && item.kontraktBall !== null && item.kontraktBall !== '' ? Number(item.kontraktBall) : null;
   const grantKvota = Number(item.grantKvota) || 0;
   const kontraktKvota = Number(item.kontraktKvota) || 0;
 
+  const grantOk = grantKvota > 0 && grantBall !== null && ball >= grantBall;
+  const kontraktOk = kontraktKvota > 0 && kontraktBall !== null && ball >= kontraktBall;
+
   // Kvotasi 0 (yoki umuman yo'q) bo'lsa, o'sha turdagi qabul (grant yoki
   // kontrakt) mavjud emas deb hisoblanadi — ball yetsa ham, o'rin yo'q
   // bo'lgani uchun bu yo'nalish "kira oladi" deb ko'rsatilmaydi.
-  if (grantKvota > 0 && grantBall !== null && ball >= grantBall) {
+  if (qabulTuri === 'grant') {
+    return grantOk
+      ? { qualifies: true, status: '🟢 Balingiz grantga yetadi' }
+      : { qualifies: false, status: null };
+  }
+  if (qabulTuri === 'kontrakt') {
+    return kontraktOk
+      ? { qualifies: true, status: '🔵 Balingiz kontraktga yetadi' }
+      : { qualifies: false, status: null };
+  }
+
+  // 'both' — avval grant, bo'lmasa kontrakt
+  if (grantOk) {
     return { qualifies: true, status: '🟢 Balingiz grantga yetadi' };
   }
-  if (kontraktKvota > 0 && kontraktBall !== null && ball >= kontraktBall) {
+  if (kontraktOk) {
     return { qualifies: true, status: '🔵 Balingiz faqat kontraktga yetadi' };
   }
   return { qualifies: false, status: null };
@@ -262,7 +280,7 @@ function renderYonalishResultsPage(userId) {
   const state = yonalishResultsState.get(userId);
   if (!state) return null;
 
-  const { subject, ball, items } = state;
+  const { subject, ball, qabulTuriLabel, items } = state;
   const totalPages = Math.max(1, Math.ceil(items.length / YONALISH_ITEMS_PER_PAGE));
   const page = Math.min(Math.max(state.page, 0), totalPages - 1);
   state.page = page;
@@ -275,6 +293,7 @@ function renderYonalishResultsPage(userId) {
 
   const header =
     `🔎 Fanlar majmuasi: <b>${subject}</b>\n` +
+    (qabulTuriLabel ? `💰 Qabul turi: <b>${qabulTuriLabel}</b>\n` : '') +
     `🎯 Balingiz: <b>${ball}</b>\n\n` +
     `✅ Kira oladigan yo'nalishlar: <b>${items.length}</b> ta (${page + 1}/${totalPages}-sahifa)\n\n` +
     `<i>Yoqqan yo'nalish tagidagi tugma orqali uni "Mening 5 ta tanlovim" ro'yxatiga qo'shishingiz mumkin (${tanlov.length}/${TANLOV_MAX}).</i>\n\n`;
@@ -857,6 +876,14 @@ const pendingYonalishSubject = new Map();
 // ball kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> matn)
 const pendingYonalishTil = new Map();
 const pendingYonalishShakl = new Map();
+// Qabul turi (Grant / Kontrakt / Grant + Kontrakt) tanlanganda, ball
+// kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> 'grant'|'kontrakt'|'both')
+const pendingYonalishQabulTuri = new Map();
+const QABUL_TURI_LABELS = {
+  grant: '🟢 Faqat Grant',
+  kontrakt: '🔵 Faqat Kontrakt',
+  both: '🟢🔵 Grant + Kontrakt',
+};
 
 function yonalishSubjectScreen() {
   const text =
@@ -912,15 +939,39 @@ async function askForYonalishShakl(chatId, userId) {
   await safeSend(chatId, text, keyboard);
 }
 
+// Ta'lim shakli tanlangandan keyin qabul turini (Grant / Kontrakt /
+// Grant + Kontrakt) so'raydi
+function yonalishQabulTuriScreen() {
+  const text =
+    `💰 Qabul turini tanlang 👇\n\n` +
+    `<i>Faqat grant, faqat kontrakt yoki ikkalasini birga ko'rishingiz mumkin.</i>`;
+
+  const keyboard = [
+    [btn({ text: '🟢 Faqat Grant', callback_data: 'yon_qabul_grant', style: 'success' })],
+    [btn({ text: '🔵 Faqat Kontrakt', callback_data: 'yon_qabul_kontrakt', style: 'primary' })],
+    [btn({ text: '🟢🔵 Grant + Kontrakt', callback_data: 'yon_qabul_both', style: 'danger' })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
+async function askForYonalishQabulTuri(chatId, userId) {
+  const { text, keyboard } = yonalishQabulTuriScreen();
+  await safeSend(chatId, text, keyboard);
+}
+
 // Fanlar majmuasi, til va shakl tanlangandan (yoki yozilgandan) keyin DTM balini so'raydi
 async function askForYonalishBall(chatId, userId) {
   awaitingYonalishBall.add(userId);
   const subject = pendingYonalishSubject.get(userId) || 'Kiritilmagan';
+  const qabulTuriLabel = QABUL_TURI_LABELS[pendingYonalishQabulTuri.get(userId)] || '';
   try {
     await bot.sendMessage(
       chatId,
-      `✅ Fanlar majmuasi: <b>${subject}</b>\n\n` +
-        `🔢 Endi DTM balingizni raqam bilan yozing (masalan: <b>154.5</b>):`,
+      `✅ Fanlar majmuasi: <b>${subject}</b>\n` +
+        (qabulTuriLabel ? `✅ Qabul turi: <b>${qabulTuriLabel}</b>\n` : '') +
+        `\n🔢 Endi DTM balingizni raqam bilan yozing (masalan: <b>154.5</b>):`,
       { parse_mode: 'HTML' }
     );
   } catch (err) {
@@ -1242,6 +1293,9 @@ bot.on('message', async (msg) => {
   const shakl = pendingYonalishShakl.get(userId) || '';
   pendingYonalishTil.delete(userId);
   pendingYonalishShakl.delete(userId);
+  const qabulTuri = pendingYonalishQabulTuri.get(userId) || 'both';
+  pendingYonalishQabulTuri.delete(userId);
+  const qabulTuriLabel = QABUL_TURI_LABELS[qabulTuri] || QABUL_TURI_LABELS.both;
 
   const tanlovLabel = [til, shakl].filter(Boolean).join(' · ');
 
@@ -1266,7 +1320,7 @@ bot.on('message', async (msg) => {
   const allResults = searchYonalishBySubject(subject).filter((r) => matchesTilShakl(r, til, shakl));
   const qualifying = allResults
     .map((r) => {
-      const cls = classifyYonalishItem(r, ball);
+      const cls = classifyYonalishItem(r, ball, qabulTuri);
       return { ...r, _status: cls.status, _qualifies: cls.qualifies };
     })
     .filter((r) => r._qualifies);
@@ -1275,9 +1329,9 @@ bot.on('message', async (msg) => {
     try {
       await bot.sendMessage(
         msg.chat.id,
-        `🔴 <b>${subject}</b>${tanlovLabel ? ` (${tanlovLabel})` : ''} fanlar majmuasi va <b>${ball}</b> ball bilan hozircha hech qanday ` +
-          `yo'nalishga (na grant, na kontrakt) kira olmaysiz.\n\n` +
-          `<i>Fanlar majmuasini boshqacharoq yozib ko'ring yoki keyingi safar tayyorgarlikni kuchaytiring 💪.</i>`,
+        `🔴 <b>${subject}</b>${tanlovLabel ? ` (${tanlovLabel})` : ''} fanlar majmuasi, <b>${qabulTuriLabel}</b> qabul turi va ` +
+          `<b>${ball}</b> ball bilan hozircha hech qanday yo'nalishga kira olmaysiz.\n\n` +
+          `<i>Fanlar majmuasini yoki qabul turini boshqacharoq tanlab ko'ring yoki keyingi safar tayyorgarlikni kuchaytiring 💪.</i>`,
         { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
       );
     } catch (err) {
@@ -1286,7 +1340,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  yonalishResultsState.set(userId, { subject, ball, items: qualifying, page: 0 });
+  yonalishResultsState.set(userId, { subject, ball, qabulTuri, qabulTuriLabel, items: qualifying, page: 0 });
   const { text, keyboard } = renderYonalishResultsPage(userId);
 
   try {
@@ -1509,6 +1563,24 @@ bot.on('callback_query', async (query) => {
       console.error('answerCallbackQuery xatosi:', err.message);
     }
     await deleteMessageSafe(chatId, messageId);
+    await askForYonalishQabulTuri(chatId, userId);
+    return;
+  }
+
+  // "Mandat tanlash" — qabul turi (Grant / Kontrakt / Grant + Kontrakt) tanlandi
+  if (
+    query.data === 'yon_qabul_grant' ||
+    query.data === 'yon_qabul_kontrakt' ||
+    query.data === 'yon_qabul_both'
+  ) {
+    const qabulTuri = query.data.replace('yon_qabul_', '');
+    pendingYonalishQabulTuri.set(userId, qabulTuri);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
     await askForYonalishBall(chatId, userId);
     return;
   }
@@ -1682,6 +1754,7 @@ bot.on('callback_query', async (query) => {
   pendingYonalishSubject.delete(userId);
   pendingYonalishTil.delete(userId);
   pendingYonalishShakl.delete(userId);
+  pendingYonalishQabulTuri.delete(userId);
   yonalishResultsState.delete(userId);
 
   const { text, keyboard } = screenFn();
