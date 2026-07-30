@@ -73,6 +73,92 @@ function loadYonalishDb() {
 }
 loadYonalishDb();
 
+// ---------------------------------------------------------------------------
+// "Mening 5 ta tanlovim" — O'zbekistonda abituriyentlar hujjat topshirishda
+// 5 tagacha yo'nalish tanlashadi. Bu yerda foydalanuvchi "Mandat tanlash"
+// natijalaridan yoqqan yo'nalishlarni o'z ro'yxatiga (5 tagacha) qo'shib
+// boradi. Ro'yxat diskka (TANLOV_DB_PATH) saqlanadi — bot qayta ishga
+// tushsa ham foydalanuvchi tanlovlari yo'qolmaydi.
+// ---------------------------------------------------------------------------
+const TANLOV_DB_PATH = path.join(DATA_DIR, 'tanlovlar.json');
+const TANLOV_MAX = 5;
+
+// userId (string) -> [{ key, otm, nomi, talimShakli, til, grantBall,
+//   grantKvota, kontraktBall, kontraktKvota, fanlar }, ...]
+let TANLOV_DB = new Map();
+
+function tanlovItemKey(item) {
+  return normalizeText(`${item.otm}|${item.nomi}|${item.talimShakli}|${item.til}`);
+}
+
+function loadTanlovDb() {
+  try {
+    const raw = fs.readFileSync(TANLOV_DB_PATH, 'utf8');
+    const obj = JSON.parse(raw);
+    TANLOV_DB = new Map(Object.entries(obj));
+    console.log(`[TANLOV] ${TANLOV_DB.size} ta foydalanuvchi tanlovi yuklandi.`);
+  } catch (err) {
+    TANLOV_DB = new Map();
+  }
+}
+loadTanlovDb();
+
+function saveTanlovDb() {
+  try {
+    const obj = Object.fromEntries(TANLOV_DB);
+    fs.writeFileSync(TANLOV_DB_PATH, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[TANLOV] Saqlashda xatolik:', err.message);
+  }
+}
+
+function getUserTanlov(userId) {
+  return TANLOV_DB.get(String(userId)) || [];
+}
+
+// Yo'nalishni foydalanuvchining tanlovlar ro'yxatiga qo'shadi.
+// Natija: { ok: true } — muvaffaqiyatli qo'shildi
+//         { ok: false, reason: 'full' } — allaqachon 5 ta to'lgan
+//         { ok: false, reason: 'duplicate' } — bu yo'nalish ro'yxatda bor
+function addToTanlov(userId, item) {
+  const key = tanlovItemKey(item);
+  const list = getUserTanlov(userId);
+
+  if (list.some((x) => x.key === key)) {
+    return { ok: false, reason: 'duplicate' };
+  }
+  if (list.length >= TANLOV_MAX) {
+    return { ok: false, reason: 'full' };
+  }
+
+  const entry = {
+    key,
+    otm: item.otm,
+    nomi: item.nomi,
+    talimShakli: item.talimShakli,
+    til: item.til,
+    grantBall: item.grantBall,
+    grantKvota: item.grantKvota,
+    kontraktBall: item.kontraktBall,
+    kontraktKvota: item.kontraktKvota,
+    fanlar: item.fanlar,
+  };
+  list.push(entry);
+  TANLOV_DB.set(String(userId), list);
+  saveTanlovDb();
+  return { ok: true };
+}
+
+// Tanlovlar ro'yxatidan bitta yo'nalishni o'chiradi (0-based index bo'yicha)
+function removeFromTanlov(userId, index) {
+  const list = getUserTanlov(userId);
+  if (index < 0 || index >= list.length) return false;
+  list.splice(index, 1);
+  TANLOV_DB.set(String(userId), list);
+  saveTanlovDb();
+  return true;
+}
+
 // Matnni solishtirish uchun kichik harfga o'tkazadi, tirnoqlarni va ortiqcha
 // bo'shliqlarni tozalaydi
 function normalizeText(s) {
@@ -153,9 +239,9 @@ function classifyYonalishItem(item, ball) {
   return { qualifies: false, status: null };
 }
 
-function formatYonalishItemLine(r) {
+function formatYonalishItemLine(r, num) {
   return (
-    `🏫 <b>${r.otm}</b>\n` +
+    `<b>${num}.</b> 🏫 <b>${r.otm}</b>\n` +
     `📚 ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
     `🟢 Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
     `🔵 Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota\n` +
@@ -176,20 +262,37 @@ function renderYonalishResultsPage(userId) {
   const start = page * YONALISH_ITEMS_PER_PAGE;
   const pageItems = items.slice(start, start + YONALISH_ITEMS_PER_PAGE);
 
+  const tanlov = getUserTanlov(userId);
+  const tanlovKeys = new Set(tanlov.map((t) => t.key));
+
   const header =
     `🔎 Fanlar majmuasi: <b>${subject}</b>\n` +
     `🎯 Balingiz: <b>${ball}</b>\n\n` +
-    `✅ Kira oladigan yo'nalishlar: <b>${items.length}</b> ta (${page + 1}/${totalPages}-sahifa)\n\n`;
+    `✅ Kira oladigan yo'nalishlar: <b>${items.length}</b> ta (${page + 1}/${totalPages}-sahifa)\n\n` +
+    `<i>Yoqqan yo'nalish tagidagi tugma orqali uni "Mening 5 ta tanlovim" ro'yxatiga qo'shishingiz mumkin (${tanlov.length}/${TANLOV_MAX}).</i>\n\n`;
 
-  const body = pageItems.map(formatYonalishItemLine).join('\n\n');
+  const body = pageItems.map((r, i) => formatYonalishItemLine(r, start + i + 1)).join('\n\n');
   const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
+
+  const keyboard = [];
+  pageItems.forEach((r, i) => {
+    const globalIndex = start + i;
+    const isAdded = tanlovKeys.has(tanlovItemKey(r));
+    keyboard.push([
+      btn({
+        text: isAdded ? `❌ ${start + i + 1}-ni tanlovdan olib tashlash` : `➕ ${start + i + 1}-ni tanlovga qo'shish`,
+        callback_data: `yon_add_${globalIndex}`,
+        style: isAdded ? 'danger' : 'success',
+      }),
+    ]);
+  });
 
   const navRow = [];
   if (page > 0) navRow.push(btn({ text: '⬅️ Oldingisi', callback_data: 'yon_page_prev', style: 'primary' }));
   if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi ➡️', callback_data: 'yon_page_next', style: 'primary' }));
-
-  const keyboard = [];
   if (navRow.length) keyboard.push(navRow);
+
+  keyboard.push([btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -530,6 +633,7 @@ function mainMenuScreen() {
     [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
     [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
     [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
+    [btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })],
   ];
 
   if (MINI_APP_URL) {
@@ -632,6 +736,53 @@ function adminAdviceScreen() {
     [btn({ text: 'Telegram', url: 'https://t.me/elmurodallanazarov', style: 'success', icon: EMOJI.telegramIcon })],
     [btn({ text: 'Telefon', callback_data: 'show_phone', style: 'primary', icon: EMOJI.phoneIcon })],
   ];
+
+  return { text, keyboard };
+}
+
+// ---------------------------------------------------------------------------
+// "Mening 5 ta tanlovim" — foydalanuvchi "Mandat tanlash" natijalaridan
+// qo'shib borgan (5 tagacha) yo'nalishlar ro'yxati
+// ---------------------------------------------------------------------------
+function formatTanlovItemLine(item, num) {
+  return (
+    `<b>${num}.</b> 🏫 <b>${item.otm}</b>\n` +
+    `📚 ${item.nomi} · ${item.talimShakli} · ${item.til}\n` +
+    `🟢 Grant: <b>${item.grantBall || '—'}</b> ball, ${item.grantKvota || 0} kvota\n` +
+    `🔵 Kontrakt: <b>${item.kontraktBall || '—'}</b> ball, ${item.kontraktKvota || 0} kvota`
+  );
+}
+
+function tanlovScreen(userId) {
+  const list = getUserTanlov(userId);
+
+  if (!list.length) {
+    const text =
+      `📋 <b>Mening 5 ta tanlovim</b>\n\n` +
+      `Hozircha ro'yxatingiz bo'sh.\n\n` +
+      `Hujjat topshirishda O'zbekistonda 5 tagacha yo'nalish ko'rsatasiz — shu ro'yxatni oldindan tayyorlab qo'yish uchun ` +
+      `<b>"🎯 Mandat tanlash"</b> bo'limida qidiruv qiling va yoqqan yo'nalishlar tagidagi <b>"➕ Tanlovga qo'shish"</b> ` +
+      `tugmasini bosing.`;
+    const keyboard = [
+      [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
+      backRow,
+    ];
+    return { text, keyboard };
+  }
+
+  const header =
+    `📋 <b>Mening 5 ta tanlovim</b> (${list.length}/${TANLOV_MAX})\n\n` +
+    `<i>O'zbekistonda hujjat topshirishda ko'rsatiladigan ustuvorlik tartibidagi kabi — birinchi yozilgani eng ustuvor.</i>\n\n`;
+  const body = list.map((item, i) => formatTanlovItemLine(item, i + 1)).join('\n\n');
+  const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
+
+  const keyboard = list.map((item, i) => [
+    btn({ text: `❌ ${i + 1}-ni o'chirish`, callback_data: `tanlov_remove_${i}`, style: 'danger' }),
+  ]);
+  if (list.length < TANLOV_MAX) {
+    keyboard.push([btn({ text: '➕ Yana yo\'nalish qo\'shish', callback_data: 'menu_yonalish', style: 'success' })]);
+  }
+  keyboard.push(backRow);
 
   return { text, keyboard };
 }
@@ -1369,6 +1520,81 @@ bot.on('callback_query', async (query) => {
     if (rendered) {
       await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
     }
+    return;
+  }
+
+  // "Mandat tanlash" natijalari — bitta yo'nalishni "5 ta tanlov" ro'yxatiga
+  // qo'shish yoki undan olib tashlash (tugma bosilganda holat almashadi)
+  if (query.data && query.data.startsWith('yon_add_')) {
+    const state = yonalishResultsState.get(userId);
+    const index = parseInt(query.data.replace('yon_add_', ''), 10);
+    const item = state && state.items[index];
+
+    if (!item) {
+      try {
+        await bot.answerCallbackQuery(query.id);
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+      return;
+    }
+
+    const alreadyIn = getUserTanlov(userId).some((t) => t.key === tanlovItemKey(item));
+    let alertText;
+    if (alreadyIn) {
+      removeFromTanlov(userId, getUserTanlov(userId).findIndex((t) => t.key === tanlovItemKey(item)));
+      alertText = '❌ Tanlovdan olib tashlandi.';
+    } else {
+      const res = addToTanlov(userId, item);
+      if (res.ok) {
+        alertText = `✅ Tanlovga qo'shildi! (${getUserTanlov(userId).length}/${TANLOV_MAX})`;
+      } else if (res.reason === 'full') {
+        alertText = `⚠️ Siz allaqachon ${TANLOV_MAX} ta yo'nalish tanladingiz. Avval birortasini olib tashlang.`;
+      } else {
+        alertText = 'ℹ️ Bu yo\'nalish allaqachon ro\'yxatingizda bor.';
+      }
+    }
+
+    try {
+      await bot.answerCallbackQuery(query.id, { text: alertText, show_alert: false });
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const rendered = renderYonalishResultsPage(userId);
+    if (rendered) {
+      await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
+    }
+    return;
+  }
+
+  // "Mening 5 ta tanlovim" — ro'yxatdan bitta yo'nalishni o'chirish
+  if (query.data && query.data.startsWith('tanlov_remove_')) {
+    const index = parseInt(query.data.replace('tanlov_remove_', ''), 10);
+    removeFromTanlov(userId, index);
+    try {
+      await bot.answerCallbackQuery(query.id, { text: "🗑 Ro'yxatdan o'chirildi." });
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    const { text, keyboard } = tanlovScreen(userId);
+    await safeEdit(chatId, messageId, text, keyboard);
+    return;
+  }
+
+  // "Mening 5 ta tanlovim" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
+  // umumiy SCREENS ro'yxatidan alohida ishlanadi)
+  if (query.data === 'menu_tanlov') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    const { text, keyboard } = tanlovScreen(userId);
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await safeSend(chatId, outText, outKeyboard);
     return;
   }
 
