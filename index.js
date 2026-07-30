@@ -991,6 +991,16 @@ const pendingYonalishSubject = new Map();
 // Ta'lim tili (O'zbek/Rus) va ta'lim shakli (Kunduzgi/Masofaviy) tanlanganda,
 // ball kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> matn)
 const pendingYonalishTil = new Map();
+// Ta'lim tili tanlash tugmalari callback_data -> ko'rsatiladigan til nomi
+const YONALISH_TIL_LABELS = {
+  yon_til_uz: "O'zbek",
+  yon_til_ru: 'Rus',
+  yon_til_qq: 'Qoraqalpoq',
+  yon_til_qz: 'Qozoq',
+  yon_til_kg: "Qirg'iz",
+  yon_til_tj: 'Tojik',
+  yon_til_tk: 'Turkman',
+};
 const pendingYonalishShakl = new Map();
 // Qabul turi (Grant / Kontrakt / Grant + Kontrakt) tanlanganda, ball
 // kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> 'grant'|'kontrakt'|'both')
@@ -1025,6 +1035,11 @@ function yonalishTilScreen(subject) {
   const keyboard = [
     [btn({ text: "O'zbek", callback_data: 'yon_til_uz', style: 'primary' })],
     [btn({ text: 'Rus', callback_data: 'yon_til_ru', style: 'success' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: 'yon_til_qq', style: 'primary' })],
+    [btn({ text: 'Qozoq', callback_data: 'yon_til_qz', style: 'success' })],
+    [btn({ text: "Qirg'iz", callback_data: 'yon_til_kg', style: 'primary' })],
+    [btn({ text: 'Tojik', callback_data: 'yon_til_tj', style: 'success' })],
+    [btn({ text: 'Turkman', callback_data: 'yon_til_tk', style: 'primary' })],
     backRow,
   ];
 
@@ -1717,8 +1732,8 @@ bot.on('callback_query', async (query) => {
   }
 
   // "Mandat tanlash" — ta'lim tili tanlandi
-  if (query.data === 'yon_til_uz' || query.data === 'yon_til_ru') {
-    pendingYonalishTil.set(userId, query.data === 'yon_til_uz' ? "O'zbek" : 'Rus');
+  if (YONALISH_TIL_LABELS[query.data]) {
+    pendingYonalishTil.set(userId, YONALISH_TIL_LABELS[query.data]);
     try {
       await bot.answerCallbackQuery(query.id);
     } catch (err) {
