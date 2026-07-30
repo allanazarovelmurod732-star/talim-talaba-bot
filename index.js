@@ -53,6 +53,80 @@ try {
 }
 const PDF_DB_PATH = path.join(DATA_DIR, 'mona_tili_pdfs.json');
 
+// ---------------------------------------------------------------------------
+// "Yo'nalish bo'yicha qidirish" — infoedu.uz'dan yig'ilgan grant/kontrakt bazasi
+// Fayl formati: [{ nomi, yonalishlar: [{ nomi, talimShakli, til, grantKvota,
+//   grantBall, kontraktKvota, kontraktBall, fanlar }] }, ...] (universitet bo'yicha guruhlangan)
+// Faylni DATA_DIR ichiga "yonalishlar.json" nomi bilan joylashtiring.
+// ---------------------------------------------------------------------------
+const YONALISH_DB_PATH = path.join(DATA_DIR, 'yonalishlar.json');
+
+// Xotirada tekis (flat) ro'yxat sifatida saqlanadi — qidiruv tezroq bo'lishi uchun
+let YONALISH_FLAT = [];
+
+function loadYonalishDb() {
+  try {
+    const raw = fs.readFileSync(YONALISH_DB_PATH, 'utf8');
+    const universitetlar = JSON.parse(raw);
+    const flat = [];
+    for (const uni of universitetlar) {
+      for (const y of uni.yonalishlar || []) {
+        flat.push({ otm: uni.nomi, ...y });
+      }
+    }
+    YONALISH_FLAT = flat;
+    console.log(`[YONALISH] ${universitetlar.length} ta OTM, ${flat.length} ta yozuv yuklandi.`);
+  } catch (err) {
+    console.warn(`[YONALISH] "${YONALISH_DB_PATH}" topilmadi yoki noto'g'ri — qidiruv bo'sh natija beradi.`);
+    YONALISH_FLAT = [];
+  }
+}
+loadYonalishDb();
+
+// Foydalanuvchi yozgan matnga mos yo'nalishlarni qidiradi (katta-kichik harf va
+// tinish belgilariga sezgir emas, oddiy "ichida bormi" qidiruvi)
+function searchYonalish(query) {
+  const norm = (s) =>
+    String(s)
+      .toLowerCase()
+      .replace(/['’‘`]/g, '')
+      .trim();
+  const q = norm(query);
+  if (!q) return [];
+  return YONALISH_FLAT.filter((item) => norm(item.nomi).includes(q));
+}
+
+// Natijalarni chiroyli matn qilib formatlaydi (Telegram xabar uzunligi cheklovi
+// tufayli ko'p bo'lsa, faqat birinchi MAX_RESULTS tasini ko'rsatadi)
+const MAX_YONALISH_RESULTS = 15;
+
+function formatYonalishResults(query, results) {
+  if (!results.length) {
+    return (
+      `❌ "<b>${query}</b>" bo'yicha hech narsa topilmadi.\n\n` +
+      `<i>Yo'nalish nomini boshqacharoq yozib ko'ring (masalan to'liq nomi bilan).</i>`
+    );
+  }
+
+  const shown = results.slice(0, MAX_YONALISH_RESULTS);
+  const lines = shown.map((r) => {
+    return (
+      `🏫 <b>${r.otm}</b>\n` +
+      `📚 ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
+      `🟢 Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
+      `🔵 Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota`
+    );
+  });
+
+  let text = `🔎 "<b>${query}</b>" bo'yicha topildi: ${results.length} ta natija\n\n` + lines.join('\n\n');
+
+  if (results.length > MAX_YONALISH_RESULTS) {
+    text += `\n\n<i>... va yana ${results.length - MAX_YONALISH_RESULTS} ta. Aniqroq nom yozib qidiring.</i>`;
+  }
+
+  return text;
+}
+
 function loadPdfDb() {
   try {
     const raw = fs.readFileSync(PDF_DB_PATH, 'utf8');
@@ -557,6 +631,7 @@ function mainMenuScreen() {
     [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
     [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
     [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_mandat', style: 'success' })],
+    [btn({ text: "🔎 Yo'nalish bo'yicha qidirish", callback_data: 'menu_yonalish', style: 'primary' })],
   ];
 
   if (MINI_APP_URL) {
@@ -752,6 +827,8 @@ const MANDAT_SUBJECT_OPTIONS = [
 
 // Foydalanuvchi o'zining fanlar majmuasini qo'lda yozayotganini kutayotgan bo'lsak, shu Set ichida turadi
 const awaitingMandatCustomSubject = new Set();
+// Foydalanuvchi "Yo'nalish bo'yicha qidirish" bo'limida yo'nalish nomini yozishini kutayotgan bo'lsak, shu Set ichida turadi
+const awaitingYonalishSearch = new Set();
 // Fanlar majmuasi tanlangandan keyin, ball kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> fanlar majmuasi matni)
 const pendingMandatSubject = new Map();
 // "⚡ Tezkor AI" tugmasi bosilganda kerak bo'ladigan oxirgi fanlar majmuasi + ball (userId -> {subject, ball})
@@ -1208,6 +1285,34 @@ bot.on('message', async (msg) => {
     );
   } catch (err) {
     console.error("Mandat kutish xabarini yuborishda xatolik:", err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// "Yo'nalish bo'yicha qidirish" — foydalanuvchi yo'nalish nomini yozganda
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaitingYonalishSearch.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+  awaitingYonalishSearch.delete(userId);
+
+  const query = msg.text.trim();
+  const results = searchYonalish(query);
+  const resultText = formatYonalishResults(query, results);
+
+  try {
+    await bot.sendMessage(msg.chat.id, resultText, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [backRow] },
+    });
+  } catch (err) {
+    console.error("Yo'nalish qidiruv natijasini yuborishda xatolik:", err.message);
   }
 });
 
@@ -1707,6 +1812,35 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "Yo'nalish bo'yicha qidirish" tugmasi bosildi — qidiruv so'zini kutamiz
+  if (query.data === 'menu_yonalish') {
+    await deleteMessageSafe(chatId, messageId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    awaitingYonalishSearch.add(userId);
+
+    try {
+      await bot.sendMessage(
+        chatId,
+        `🔎 <b>Yo'nalish bo'yicha qidirish</b>\n\n` +
+          `Qidirmoqchi bo'lgan yo'nalish nomini yozing (masalan: <b>Kompyuter injiniringi</b>).\n\n` +
+          `Natijada shu yo'nalishni beruvchi universitetlar, ularning <b>grant</b> va ` +
+          `<b>kontrakt</b> ballari hamda kvotalari chiqadi.`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [backRow] },
+        }
+      );
+    } catch (err) {
+      console.error("Yo'nalish qidiruv so'rovi xabari xatosi:", err.message);
+    }
+    return;
+  }
+
   const screenFn = SCREENS[query.data];
   if (!screenFn) {
     try { await bot.answerCallbackQuery(query.id); } catch (err) { console.error('answerCallbackQuery xatosi:', err.message); }
@@ -1746,6 +1880,9 @@ bot.on('callback_query', async (query) => {
   } catch (err) {
     console.error('answerCallbackQuery xatosi:', err.message);
   }
+
+  // Foydalanuvchi boshqa bo'limga o'tsa, "yo'nalish qidirish" holati bekor qilinadi
+  awaitingYonalishSearch.delete(userId);
 
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
