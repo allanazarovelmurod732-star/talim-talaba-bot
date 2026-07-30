@@ -29,14 +29,9 @@ const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: false } });
 // ---------------------------------------------------------------------------
 const GREETING_STICKER_ID =
   'CAACAgIAAxkBAAEgvKVqYLQXonir0ZoEH8vO88MM9iAHigAC4lEAAgF6EEsLnWR0Hxx9Lj0E';
-const SOON_STICKER_ID =
-  'CAACAgEAAxkBAAEgvJNqYLGY0aCXRX9JqTOsLSlQeaEgkgAC_AEAAqHoMETtlcN69zhxMD0E';
 
 // ---------------------------------------------------------------------------
-// "Majburiy Ona tili" PDF bazasi — oddiy JSON fayl orqali saqlanadi
-// Kalit format: "18_1" (18-iyul, 1-smena) -> Telegram file_id
-// ---------------------------------------------------------------------------
-// DATA_DIR — PDF va referal ma'lumotlari saqlanadigan joy.
+// DATA_DIR — ma'lumotlar saqlanadigan joy.
 // Agar hostingda "persistent disk/volume" bo'lsa, .env fayliga
 // DATA_DIR=/path/to/persistent/folder qo'shib, ma'lumotlarni shu doimiy
 // diskka yo'naltiring — aks holda deploy/restart vaqtida ular o'chib ketishi mumkin.
@@ -47,7 +42,6 @@ try {
 } catch (err) {
   console.error("[DATA] Ma'lumotlar papkasini tayyorlashda xatolik:", err.message);
 }
-const PDF_DB_PATH = path.join(DATA_DIR, 'mona_tili_pdfs.json');
 
 // ---------------------------------------------------------------------------
 // "Yo'nalish bo'yicha qidirish" — infoedu.uz'dan yig'ilgan grant/kontrakt bazasi
@@ -108,173 +102,95 @@ function searchYonalishBySubject(subject) {
   return YONALISH_FLAT.filter((item) => subjectMatches(item.fanlar, subject));
 }
 
-// Natijalarni chiroyli matn qilib, Telegram xabar uzunligi cheklovidan (4096 belgi)
-// oshib ketmasligi uchun bir nechta "bo'lak" (chunk) qilib qaytaradi
-const TELEGRAM_SAFE_CHUNK = 3500;
+// Bazadagi "til" va "talimShakli" maydonlarini foydalanuvchi tanlagan
+// ta'lim tili / shakli bilan solishtiradi (moslashuvchan — qisman mos kelsa ham topadi)
+function matchesTilShakl(item, til, shakl) {
+  const itemTil = normalizeText(item.til || '');
+  const itemShakl = normalizeText(item.talimShakli || '');
+  const wantTil = normalizeText(til || '');
+  const wantShakl = normalizeText(shakl || '');
 
-// Har bir chunk oxiriga qo'shiladigan eslatma — ballar qaysi qabul yiliga tegishli ekani
+  const tilOk = !wantTil || itemTil.includes(wantTil);
+  const shaklOk = !wantShakl || itemShakl.includes(wantShakl);
+
+  return tilOk && shaklOk;
+}
+
+// Eslatma — ballar qaysi qabul yiliga tegishli ekani
 const YONALISH_YIL_ESLATMASI =
   "<i>Eslatma: bu ballar 2025/2026-o'quv yiliga tegishli.</i>";
 
-function formatYonalishBallResults(subject, ball, results) {
-  if (!results.length) {
-    return [
-      `❌ <b>${subject}</b> fanlar majmuasi bo'yicha bazadan hech narsa topilmadi.\n\n` +
-        `<i>Fanlar majmuasini boshqacharoq (masalan qisqartmasdan) yozib ko'ring.</i>`,
-    ];
+// Rasmiy ma'lumotlarga ko'ra, bundan past ball bilan hech qanday yo'nalishga
+// (na grant, na kontrakt) kirish imkoni yo'q — shuning uchun bu balldan past
+// bo'lsa, bot yo'nalishlarni ro'yxat qilib o'tirmasdan darhol shu haqda ogohlantiradi.
+const MIN_KIRISH_BALL = 56.7;
+
+// Har bir sahifada ko'rsatiladigan yo'nalishlar soni (xabar juda uzun
+// bo'lib ketmasligi uchun "Keyingisi/Oldingisi" tugmalari bilan sahifalanadi)
+const YONALISH_ITEMS_PER_PAGE = 5;
+
+// userId -> { subject, ball, items, page } — foydalanuvchining qidiruv
+// natijalari va hozirgi sahifasi shu yerda saqlanadi
+const yonalishResultsState = new Map();
+
+// Berilgan ball bilan shu yo'nalishga (grant yoki kontrakt asosida) kirish
+// mumkinmi-yo'qmi va qaysi holat ekanini aniqlaydi
+function classifyYonalishItem(item, ball) {
+  const grantBall = item.grantBall !== undefined && item.grantBall !== null && item.grantBall !== '' ? Number(item.grantBall) : null;
+  const kontraktBall = item.kontraktBall !== undefined && item.kontraktBall !== null && item.kontraktBall !== '' ? Number(item.kontraktBall) : null;
+
+  if (grantBall !== null && ball >= grantBall) {
+    return { qualifies: true, status: '🟢 Balingiz grantga yetadi' };
   }
+  if (kontraktBall !== null && ball >= kontraktBall) {
+    return { qualifies: true, status: '🔵 Balingiz faqat kontraktga yetadi' };
+  }
+  return { qualifies: false, status: null };
+}
+
+function formatYonalishItemLine(r) {
+  return (
+    `🏫 <b>${r.otm}</b>\n` +
+    `📚 ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
+    `🟢 Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
+    `🔵 Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota\n` +
+    r._status
+  );
+}
+
+// Foydalanuvchining hozirgi sahifasini matn + klaviatura ko'rinishida qaytaradi
+function renderYonalishResultsPage(userId) {
+  const state = yonalishResultsState.get(userId);
+  if (!state) return null;
+
+  const { subject, ball, items } = state;
+  const totalPages = Math.max(1, Math.ceil(items.length / YONALISH_ITEMS_PER_PAGE));
+  const page = Math.min(Math.max(state.page, 0), totalPages - 1);
+  state.page = page;
+
+  const start = page * YONALISH_ITEMS_PER_PAGE;
+  const pageItems = items.slice(start, start + YONALISH_ITEMS_PER_PAGE);
 
   const header =
     `🔎 Fanlar majmuasi: <b>${subject}</b>\n` +
     `🎯 Balingiz: <b>${ball}</b>\n\n` +
-    `Topildi: <b>${results.length}</b> ta yo'nalish\n\n`;
+    `✅ Kira oladigan yo'nalishlar: <b>${items.length}</b> ta (${page + 1}/${totalPages}-sahifa)\n\n`;
 
-  const lines = results.map((r) => {
-    const grantBall = r.grantBall !== undefined && r.grantBall !== null && r.grantBall !== '' ? Number(r.grantBall) : null;
-    const kontraktBall = r.kontraktBall !== undefined && r.kontraktBall !== null && r.kontraktBall !== '' ? Number(r.kontraktBall) : null;
+  const body = pageItems.map(formatYonalishItemLine).join('\n\n');
+  const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
 
-    let status;
-    if (grantBall !== null && ball >= grantBall) {
-      status = '🟢 Balingiz grantga yetadi';
-    } else if (kontraktBall !== null && ball >= kontraktBall) {
-      status = '🔵 Balingiz faqat kontraktga yetadi';
-    } else {
-      status = '🔴 Balingiz hozircha yetmaydi';
-    }
+  const navRow = [];
+  if (page > 0) navRow.push(btn({ text: '⬅️ Oldingisi', callback_data: 'yon_page_prev', style: 'primary' }));
+  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi ➡️', callback_data: 'yon_page_next', style: 'primary' }));
 
-    return (
-      `🏫 <b>${r.otm}</b>\n` +
-      `📚 ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
-      `🟢 Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
-      `🔵 Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota\n` +
-      status
-    );
-  });
+  const keyboard = [];
+  if (navRow.length) keyboard.push(navRow);
+  keyboard.push(backRow);
 
-  // Har bir bo'lakni TELEGRAM_SAFE_CHUNK dan oshmaydigan qilib yig'amiz
-  const chunks = [];
-  let current = header;
-  for (const line of lines) {
-    if (current.length + line.length + 2 > TELEGRAM_SAFE_CHUNK) {
-      chunks.push(current);
-      current = '';
-    }
-    current += (current ? '\n\n' : '') + line;
-  }
-  if (current) chunks.push(current);
-
-  // Eslatmani faqat oxirgi bo'lakka qo'shamiz
-  chunks[chunks.length - 1] += `\n\n${YONALISH_YIL_ESLATMASI}`;
-
-  return chunks;
-}
-
-function loadPdfDb() {
-  try {
-    const raw = fs.readFileSync(PDF_DB_PATH, 'utf8');
-    return JSON.parse(raw);
-  } catch (err) {
-    return {};
-  }
-}
-
-function savePdfDb(db) {
-  try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(PDF_DB_PATH, JSON.stringify(db, null, 2), 'utf8');
-  } catch (err) {
-    console.error('PDF bazasini saqlashda xatolik:', err.message);
-  }
-}
-
-function getPdfFileId(dateKey, smena) {
-  const db = loadPdfDb();
-  return db[`${dateKey}_${smena}`];
-}
-
-function setPdfFileId(dateKey, smena, fileId) {
-  const db = loadPdfDb();
-  db[`${dateKey}_${smena}`] = fileId;
-  savePdfDb(db);
+  return { text, keyboard };
 }
 
 // ---------------------------------------------------------------------------
-// Referal tizimi — "Majburiy Ona tili" bo'limini ochish uchun foydalanuvchi
-// kamida REQUIRED_REFERRALS ta do'stini botga taklif qilishi kerak.
-// Baza: { referrers: { "<taklif_qiluvchi_id>": ["<taklif_qilingan_id>", ...] },
-//         invited: ["<taklif_qilingan_id>", ...] }  — "invited" har bir
-// foydalanuvchi faqat BIR marta (birinchi taklif qiluvchiga) hisoblanishi uchun.
-// ---------------------------------------------------------------------------
-const REFERRAL_DB_PATH = path.join(DATA_DIR, 'referrals.json');
-const REQUIRED_REFERRALS = 1;
-
-function loadReferralDb() {
-  try {
-    const raw = fs.readFileSync(REFERRAL_DB_PATH, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed.referrers) parsed.referrers = {};
-    if (!Array.isArray(parsed.invited)) parsed.invited = [];
-    return parsed;
-  } catch (err) {
-    return { referrers: {}, invited: [] };
-  }
-}
-
-function saveReferralDb(db) {
-  try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(REFERRAL_DB_PATH, JSON.stringify(db, null, 2), 'utf8');
-  } catch (err) {
-    console.error('Referal bazasini saqlashda xatolik:', err.message);
-  }
-}
-
-function getReferralCount(userId) {
-  const db = loadReferralDb();
-  const list = db.referrers[String(userId)];
-  return list ? list.length : 0;
-}
-
-function hasEnoughReferrals(userId) {
-  return getReferralCount(userId) >= REQUIRED_REFERRALS;
-}
-
-// referrerId — havolani ulashgan foydalanuvchi, inviteeId — shu havola orqali
-// botga kirgan yangi foydalanuvchi. O'zini-o'zi taklif qilish va bir
-// foydalanuvchini ikki marta hisoblash oldini olinadi.
-function addReferral(referrerId, inviteeId) {
-  const refId = String(referrerId);
-  const invId = String(inviteeId);
-  if (refId === invId) return false;
-
-  const db = loadReferralDb();
-  if (db.invited.includes(invId)) return false;
-
-  if (!db.referrers[refId]) db.referrers[refId] = [];
-  db.referrers[refId].push(invId);
-  db.invited.push(invId);
-  saveReferralDb(db);
-  return true;
-}
-
-// Bot username'ini keshdan oladi, bo'lmasa Telegram'dan so'raydi
-async function getBotUsername() {
-  if (!BOT_USERNAME) {
-    try {
-      const me = await bot.getMe();
-      BOT_USERNAME = me.username;
-    } catch (err) {
-      console.error('getMe (referal) xatosi:', err.message);
-    }
-  }
-  return BOT_USERNAME;
-}
-
-async function buildReferralLink(userId) {
-  const username = await getBotUsername();
-  return `https://t.me/${username}?start=ref_${userId}`;
-}
-
 // bot.getMe() natijasini keshlab qo'yamiz — har xabarda qayta so'ramaslik uchun
 let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
@@ -477,29 +393,10 @@ const EMOJI = {
   telegramIcon: '5231489647946768652',
   instagramIcon: '5231051793210810793',
   phoneIcon: '5318765591014678496',
-  monaTiliButtonIcon: '5436325327011854319',
-  monaTiliDateIcon: '5436325327011854319',
-  smena1Icon: '5382322671679708881',
-  smena2Icon: '5381990043642502553',
-  monaTiliSoonIcon: '5282843764451195532',
   giftIcon: '5449800250032143374',
-  statsIcon: '5384356403118886801',
-  linkIcon: '5271604874419647061',
-  pdfIcon: '5219922459205053449',
   backIcon: '5411112567609243032',
-  shareIcon: '5260567229375724180',
   checkIcon: '5206607081334906820',
 };
-
-// "Majburiy Ona tili" oqimidagi kunlar ro'yxati (callback_data uchun kalit -> nom)
-const MONA_TILI_DATES = [
-  { key: '18', label: '18-iyul' },
-  { key: '19', label: '19-iyul' },
-  { key: '20', label: '20-iyul' },
-  { key: '21', label: '21-iyul' },
-  { key: '22', label: '22-iyul' },
-  { key: '23', label: '23-iyul' },
-];
 
 // ---------------------------------------------------------------------------
 // Majburiy obuna kanallar
@@ -627,8 +524,7 @@ function mainMenuScreen() {
     [btn({ text: 'Test Platformamiz', callback_data: 'menu_test', icon: EMOJI.testMenuIcon, style: 'success' })],
     [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
     [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
-    [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_mandat', style: 'success' })],
-    [btn({ text: "🔎 Yo'nalish bo'yicha qidirish", callback_data: 'menu_yonalish', style: 'primary' })],
+    [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
   ];
 
   if (MINI_APP_URL) {
@@ -717,113 +613,36 @@ function faqScreen() {
   return { text, keyboard };
 }
 
-function referralGateScreen(userId, link) {
-  const count = getReferralCount(userId);
+// ---------------------------------------------------------------------------
+// "Admin 24/7" — foydalanuvchi yo'nalish tanlash bo'yicha to'g'ridan-to'g'ri
+// admindan shaxsiy maslahat olishi uchun kontakt kartasi
+// ---------------------------------------------------------------------------
+function adminAdviceScreen() {
   const text =
-    `${emoji(EMOJI.giftIcon, '🎁')} <b>Majburiy Ona tili</b> materiallarini ochish uchun kamida <b>${REQUIRED_REFERRALS} ta do'stingizni</b> botga taklif qiling!\n\n` +
-    `${emoji(EMOJI.statsIcon, '📊')} Taklif qilganlaringiz: <b>${count}/${REQUIRED_REFERRALS}</b>\n\n` +
-    `${emoji(EMOJI.linkIcon, '🔗')} <b>Sizning shaxsiy havolangiz:</b>\n<code>${link}</code>\n\n` +
-    `<i>Do'stingiz shu havola orqali botga /start bosishi bilanoq hisoblanadi. Shundan so'ng pastdagi "Tekshirish" tugmasini bosing.</i>`;
+    `${emoji(EMOJI.giftIcon, '🟢')} <b>Admin 24/7</b>\n\n` +
+    `Yo'nalish tanlash bo'yicha shaxsiy maslahat kerakmi? Pastdagi tugmalar orqali ` +
+    `to'g'ridan-to'g'ri adminga murojaat qiling — sizga qaysi yo'nalish(lar) mos kelishi haqida yordam beramiz.`;
 
   const keyboard = [
-    [
-      btn({
-        text: "Do'stlarga ulashish",
-        url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(
-          "Bu botda foydali ta'lim materiallari bor, qo'shiling!"
-        )}`,
-        style: 'primary',
-        icon: EMOJI.shareIcon,
-      }),
-    ],
-    [btn({ text: 'Tekshirish', callback_data: 'md_check_referral', style: 'success', icon: EMOJI.checkIcon })],
-  ];
-
-  return { text, keyboard };
-}
-
-function monaTiliDatesScreen() {
-  const text =
-    `${emoji(EMOJI.monaTiliDateIcon, '📅')} <b>Majburiy Ona tili</b>\n\n` +
-    `Kerakli kunni tanlang:`;
-
-  const keyboard = MONA_TILI_DATES.map((d) => [
-    btn({ text: d.label, callback_data: `md_date_${d.key}`, style: 'primary', icon: EMOJI.monaTiliDateIcon }),
-  ]);
-
-  return { text, keyboard };
-}
-
-function monaTiliSmenaScreen(dateLabel, dateKey) {
-  const text =
-    `${emoji(EMOJI.monaTiliDateIcon, '📅')} <b>${dateLabel}</b>\n\n` +
-    `Smenangizni tanlang:`;
-
-  const keyboard = [
-    [btn({ text: '1-smena', callback_data: `md_smena_1_${dateKey}`, style: 'primary', icon: EMOJI.smena1Icon })],
-    [btn({ text: '2-smena', callback_data: `md_smena_2_${dateKey}`, style: 'success', icon: EMOJI.smena2Icon })],
-    [btn({ text: 'Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })],
+    [btn({ text: 'Telegram', url: 'https://t.me/elmurodallanazarov', style: 'success', icon: EMOJI.telegramIcon })],
+    [btn({ text: 'Telefon', callback_data: 'show_phone', style: 'primary', icon: EMOJI.phoneIcon })],
   ];
 
   return { text, keyboard };
 }
 
 // ---------------------------------------------------------------------------
-// "Mandat tanlash" — foydalanuvchi DTM balini kiritadi, bot rasmiy e'lon
-// qilingan MINIMAL o'tish ballari asosida taxminiy natija beradi.
-//
-// MUHIM: Bu real vaqtda biror saytdan (masalan mandat.uzbmb.uz, talabaa.uz)
-// avtomatik o'qib olinmaydi — bu saytlarning aniq kalkulyatori faqat
-// login qilingan foydalanuvchiga ochiladi, shuning uchun undan avtomatik
-// "scraping" qilish ishonchsiz va noto'g'ri bo'lar edi. O'rniga quyidagi
-// chegaralar Davlat test markazi tomonidan rasmiy e'lon qilingan MINIMAL
-// ballarga asoslangan. Rasmiy raqamlar har yili o'zgarishi mumkin —
-// yangi yil e'lon qilinganda shu MANDAT_TIERS massivini yangilab turing.
-// ---------------------------------------------------------------------------
-const MANDAT_TIERS = [
-  {
-    min: 94.5,
-    text:
-      "✅ Balingiz yuqori! Taxminan, deyarli barcha yo'nalishlarda — jumladan " +
-      "<b>tibbiyot, huquq, biznes va boshqaruv</b> kabi eng talabgir sohalarda ham — " +
-      "<b>grant</b>ga da'vogar bo'la olasiz.",
-  },
-  {
-    min: 75.6,
-    text:
-      "🎓 Ushbu ball bilan aksariyat oddiy yo'nalishlarda <b>grant</b>ga, " +
-      "imtiyozli (tibbiyot, huquq, biznes, boshqaruv) yo'nalishlarda esa ko'proq " +
-      "<b>kontrakt</b> asosida o'qishga taxminan mos kelasiz.",
-  },
-  {
-    min: 66.5,
-    text:
-      "📌 Bu ball bilan aksariyat yo'nalishlarda <b>kontrakt</b> asosida o'qish imkoniyati yuqori. " +
-      "Talabgir bo'lmagan ba'zi yo'nalishlarda grantga ham urinib ko'rsangiz bo'ladi.",
-  },
-];
-const MANDAT_MIN_FALLBACK_TEXT =
-  "⚠️ Afsuski, bu ball rasmiy e'lon qilingan minimal chegaralardan past bo'lishi mumkin. " +
-  "Hozircha aniq bir yo'nalishga taxminiy kirish imkoniyati past ko'rinmoqda — keyingi safar " +
-  "tayyorgarlikni kuchaytiring 💪.";
-
-// Foydalanuvchi hozir balini kiritishini kutayotgan bo'lsa, shu Set ichida turadi
-const awaitingMandatBall = new Set();
-
-// ---------------------------------------------------------------------------
-// "Mandat tanlash" — fanlar majmuasi bo'yicha admin bilan aniq maslahat oqimi
+// "Mandat tanlash" (avvalgi "Yo'nalish bo'yicha qidirish") — fanlar majmuasi
+// bo'yicha admin bilan aniq maslahat oqimi
 // ---------------------------------------------------------------------------
 // Fanlar majmuasi tugmalari ro'yxati (kerak bo'lsa shu massivga qo'shib/o'zgartirib turing)
 const MANDAT_SUBJECT_OPTIONS = [
-  'Matematika + Fizika',
-  'Matematika + Chet tili',
-  'Kimyo + Biologiya',
-  'Tarix + Chet tili',
-  'Matematika + Tarix',
+  'Biologiya + Kimyo',
+  'Ingliz tili + Ona tili va adabiyoti',
+  'Chet tili + Ona tili va adabiyoti',
 ];
 
 // Foydalanuvchi o'zining fanlar majmuasini qo'lda yozayotganini kutayotgan bo'lsak, shu Set ichida turadi
-const awaitingMandatCustomSubject = new Set();
 // Foydalanuvchi "Yo'nalish bo'yicha qidirish" bo'limida o'zining fanlar
 // majmuasini qo'lda yozayotganini kutayotgan bo'lsak, shu Set ichida turadi
 const awaitingYonalishCustomSubject = new Set();
@@ -833,10 +652,14 @@ const awaitingYonalishBall = new Set();
 // Fanlar majmuasi tanlangandan keyin, ball kelgunga qadar vaqtincha shu yerda
 // saqlanadi (userId -> fanlar majmuasi matni)
 const pendingYonalishSubject = new Map();
+// Ta'lim tili (O'zbek/Rus) va ta'lim shakli (Kunduzgi/Masofaviy) tanlanganda,
+// ball kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> matn)
+const pendingYonalishTil = new Map();
+const pendingYonalishShakl = new Map();
 
 function yonalishSubjectScreen() {
   const text =
-    `🔎 <b>Yo'nalish bo'yicha qidirish</b>\n\n` +
+    `🎯 <b>Mandat tanlash</b>\n\n` +
     `Fanlar majmuangizni tanlang 👇\n\n` +
     `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosib, o'zingiz yozishingiz mumkin.</i>`;
 
@@ -849,10 +672,49 @@ function yonalishSubjectScreen() {
   return { text, keyboard };
 }
 
-// Fanlar majmuasi tanlangandan (yoki yozilgandan) keyin DTM balini so'raydi
-async function askForYonalishBall(chatId, userId, subject) {
+// Fanlar majmuasi tanlangandan (yoki yozilgandan) keyin ta'lim tilini so'raydi
+function yonalishTilScreen(subject) {
+  const text =
+    `✅ Fanlar majmuasi: <b>${subject}</b>\n\n` +
+    `🌐 Ta'lim tilini tanlang 👇`;
+
+  const keyboard = [
+    [btn({ text: "O'zbek", callback_data: 'yon_til_uz', style: 'primary' })],
+    [btn({ text: 'Rus', callback_data: 'yon_til_ru', style: 'success' })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
+async function askForYonalishTil(chatId, userId, subject) {
   pendingYonalishSubject.set(userId, subject);
+  const { text, keyboard } = yonalishTilScreen(subject);
+  await safeSend(chatId, text, keyboard);
+}
+
+// Ta'lim tili tanlangandan keyin ta'lim shaklini so'raydi
+function yonalishShaklScreen() {
+  const text = `🏫 Ta'lim shaklini tanlang 👇`;
+
+  const keyboard = [
+    [btn({ text: 'Kunduzgi', callback_data: 'yon_shakl_kunduzgi', style: 'primary' })],
+    [btn({ text: 'Masofaviy', callback_data: 'yon_shakl_masofaviy', style: 'success' })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
+async function askForYonalishShakl(chatId, userId) {
+  const { text, keyboard } = yonalishShaklScreen();
+  await safeSend(chatId, text, keyboard);
+}
+
+// Fanlar majmuasi, til va shakl tanlangandan (yoki yozilgandan) keyin DTM balini so'raydi
+async function askForYonalishBall(chatId, userId) {
   awaitingYonalishBall.add(userId);
+  const subject = pendingYonalishSubject.get(userId) || 'Kiritilmagan';
   try {
     await bot.sendMessage(
       chatId,
@@ -865,64 +727,14 @@ async function askForYonalishBall(chatId, userId, subject) {
   }
 }
 
-// Fanlar majmuasi tanlangandan keyin, ball kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> fanlar majmuasi matni)
-const pendingMandatSubject = new Map();
-function estimateMandatText(ball) {
-  for (const tier of MANDAT_TIERS) {
-    if (ball >= tier.min) return tier.text;
-  }
-  return MANDAT_MIN_FALLBACK_TEXT;
-}
-
-function mandatScreen() {
-  const text =
-    `🎯 <b>Mandat tanlash</b>\n\n` +
-    `Fanlar majmuangizni tanlang 👇\n\n` +
-    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosib, o'zingiz yozishingiz mumkin.</i>`;
-
-  const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
-    btn({ text: subject, callback_data: `mandat_subj_${i}`, style: 'primary' }),
-  ]);
-  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'mandat_subj_custom', style: 'success' })]);
-  keyboard.push(backRow);
-
-  return { text, keyboard };
-}
-
-// Fanlar majmuasi tanlangandan (yoki yozilgandan) keyin DTM balini so'raydi
-async function askForMandatBall(chatId, userId, subject) {
-  pendingMandatSubject.set(userId, subject);
-  awaitingMandatBall.add(userId);
-  try {
-    await bot.sendMessage(
-      chatId,
-      `✅ Fanlar majmuasi: <b>${subject}</b>\n\n` +
-        `🔢 Endi DTM balingizni raqam bilan yozing (masalan: <b>154.5</b>):`,
-      { parse_mode: 'HTML' }
-    );
-  } catch (err) {
-    console.error('Mandat ball so\'rash xabari xatosi:', err.message);
-  }
-}
-
-function monaTiliSoonScreen() {
-  const text =
-    `${emoji(EMOJI.monaTiliSoonIcon, '🔜')} <b>Tez kunda!</b>\n\n` +
-    `23-iyul kuni uchun material hali tayyorlanmoqda.`;
-
-  const keyboard = [[btn({ text: 'Orqaga', callback_data: 'md_dates_back', style: 'danger', icon: EMOJI.backIcon })]];
-
-  return { text, keyboard };
-}
-
 const SCREENS = {
   menu_back: mainMenuScreen,
   menu_channel: channelScreen,
   menu_test: testScreen,
   menu_founder: founderScreen,
   menu_faq: faqScreen,
-  menu_mandat: mandatScreen,
   menu_yonalish: yonalishSubjectScreen,
+  menu_admin_advice: adminAdviceScreen,
 };
 
 // ---------------------------------------------------------------------------
@@ -1022,60 +834,9 @@ bot.onText(/^\/id/, async (msg) => {
   }
 });
 
-// Admin uchun — bazaga qaysi kun/smenalar uchun PDF saqlanganini ko'rsatadi
-bot.onText(/^\/pdflist/, async (msg) => {
-  if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
-
-  const db = loadPdfDb();
-  const keys = Object.keys(db);
-  if (!keys.length) {
-    try {
-      await bot.sendMessage(msg.chat.id, "📂 Bazada hali PDF fayl yo'q.");
-    } catch (err) {
-      console.error('/pdflist xatosi:', err.message);
-    }
-    return;
-  }
-
-  const lines = keys.sort().map((k) => {
-    const [dateKey, smena] = k.split('_');
-    return `• ${dateKey}-iyul — ${smena}-smena`;
-  });
-
-  try {
-    await bot.sendMessage(msg.chat.id, `📂 <b>Bazadagi PDF fayllar:</b>\n\n${lines.join('\n')}`, {
-      parse_mode: 'HTML',
-    });
-  } catch (err) {
-    console.error('/pdflist xatosi:', err.message);
-  }
-});
-
 bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   const userId = msg.from.id;
   const chatType = msg.chat.type;
-  const startPayload = match && match[1] ? match[1] : null;
-
-  // Referal orqali kirgan bo'lsa — taklif qiluvchiga hisoblanadi
-  // (faqat shaxsiy chatda, o'zini-o'zi taklif qilish va qayta hisoblash oldini olinadi)
-  if (chatType === 'private' && startPayload && startPayload.startsWith('ref_')) {
-    const referrerId = startPayload.replace('ref_', '');
-    if (referrerId) {
-      const added = addReferral(referrerId, userId);
-      if (added) {
-        try {
-          await bot.sendMessage(
-            referrerId,
-            `🎉 <b>Tabriklaymiz!</b> Sizning havolangiz orqali yangi foydalanuvchi botga qo'shildi.\n\n` +
-              `📊 Jami taklif qilganlaringiz: <b>${getReferralCount(referrerId)}/${REQUIRED_REFERRALS}</b>`,
-            { parse_mode: 'HTML' }
-          );
-        } catch (err) {
-          console.error('Referal xabarini yuborishda xatolik:', err.message);
-        }
-      }
-    }
-  }
 
   // Guruhda — obuna tekshiruvisiz, premium-siz
   if (chatType === 'group' || chatType === 'supergroup') {
@@ -1108,7 +869,7 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   // MUHIM: Telegram cheklovi — mini ilova ichidagi "Fikr-mulohaza" formasi
   // (sendData) faqat maxsus KLAVIATURA tugmasi orqali ochilganda ishlaydi.
   // Inline tugma yoki menyu tugmasi orqali ochilganda sendData jim ishlamaydi.
-  // Shuning uchun shu maxsus tugmani alohida yuboramiz. "Majburiy Ona tili" tugmasi
+  // Shuning uchun shu maxsus tugmani alohida yuboramiz. "Admin 24/7" tugmasi
   // mini ilovadan qat'i nazar har doim ko'rsatiladi.
   const bottomKeyboardRows = [];
   if (MINI_APP_URL) {
@@ -1123,9 +884,9 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   }
   bottomKeyboardRows.push([
     {
-      text: 'Majburiy Ona tili',
+      text: 'Admin 24/7',
       style: 'danger',
-      icon_custom_emoji_id: EMOJI.monaTiliButtonIcon,
+      icon_custom_emoji_id: EMOJI.giftIcon,
     },
   ]);
 
@@ -1133,8 +894,8 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
     await bot.sendMessage(
       msg.chat.id,
       MINI_APP_URL
-        ? `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish yoki "Majburiy Ona tili" materiallarini olish uchun pastdagi tugmalardan foydalaning:`
-        : `${emoji(EMOJI.monaTiliButtonIcon, '🟢')} "Majburiy Ona tili" materiallarini olish uchun pastdagi tugmadan foydalaning:`,
+        ? `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish yoki "Admin 24/7" orqali yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi tugmalardan foydalaning:`
+        : `${emoji(EMOJI.giftIcon, '🟢')} Yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi "Admin 24/7" tugmasidan foydalaning:`,
       {
         parse_mode: 'HTML',
         reply_markup: {
@@ -1199,124 +960,23 @@ bot.on('message', async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
-// "Majburiy Ona tili" tugmasi — avval referal tekshiriladi, keyin kunlar
-// ro'yxati ko'rsatiladi
+// "Admin 24/7" tugmasi — yo'nalish tanlash bo'yicha admin kontaktini ko'rsatadi
 // ---------------------------------------------------------------------------
 bot.on('message', async (msg) => {
   if (msg.web_app_data) return;
   if (msg._relayedToUser) return;
   if (!msg.text) return;
-  if (msg.text.trim() !== 'Majburiy Ona tili') return;
+  if (msg.text.trim() !== 'Admin 24/7') return;
 
   msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
 
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
-
-  if (!hasEnoughReferrals(userId)) {
-    const link = await buildReferralLink(userId);
-    const { text, keyboard } = referralGateScreen(userId, link);
-    await safeSend(chatId, text, keyboard);
-    return;
-  }
-
-  const { text, keyboard } = monaTiliDatesScreen();
+  const { text, keyboard } = adminAdviceScreen();
   await safeSend(chatId, text, keyboard);
 });
 
 // ---------------------------------------------------------------------------
-// "Mandat tanlash" — foydalanuvchi yuborgan DTM balini qabul qilib, taxminiy
-// natijani qaytaradi
-// ---------------------------------------------------------------------------
-bot.on('message', async (msg) => {
-  if (msg.web_app_data) return;
-  if (msg._relayedToUser) return;
-  if (!msg.text) return;
-
-  const userId = msg.from.id;
-  if (!awaitingMandatBall.has(userId)) return;
-
-  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
-
-  const raw = msg.text.trim().replace(',', '.');
-  const ball = parseFloat(raw);
-
-  if (isNaN(ball) || ball < 0 || ball > 189) {
-    try {
-      await bot.sendMessage(
-        msg.chat.id,
-        "❗️ Iltimos, to'g'ri raqam kiriting (0 dan 189 gacha), masalan: <b>154.5</b>",
-        { parse_mode: 'HTML' }
-      );
-    } catch (err) {
-      console.error('Mandat ball validatsiya xabari xatosi:', err.message);
-    }
-    return; // holat saqlanadi — foydalanuvchi qayta urinishi mumkin
-  }
-
-  awaitingMandatBall.delete(userId);
-  const subject = pendingMandatSubject.get(userId) || 'Kiritilmagan';
-  pendingMandatSubject.delete(userId);
-
-  const estimateText = estimateMandatText(ball);
-  const resultText =
-    `🎯 <b>Balingiz: ${ball}</b>\n` +
-    `📚 <b>Fanlar majmuasi:</b> ${subject}\n\n${estimateText}\n\n` +
-    `<i>Eslatma: bu natija rasmiy minimal chegaralarga asoslangan taxminiy hisob-kitob, aniq universitet ` +
-    `yoki yo'nalish bo'yicha emas — har birining o'tish balli boshqacha bo'lishi mumkin. To'liq va ` +
-    `yangilangan ma'lumot uchun:</i>\n` +
-    `🔗 mandat.uzbmb.uz\n` +
-    `🔗 talabaa.uz/kirish-ballari`;
-
-  try {
-    await bot.sendMessage(msg.chat.id, resultText, {
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    });
-  } catch (err) {
-    console.error('Mandat natijasini yuborishda xatolik:', err.message);
-  }
-
-  // Aniq qaysi yo'nalish(lar)ga kira olishi haqida shaxsiy javob olishi uchun
-  // so'rovni adminga yuboramiz va foydalanuvchiga kutish haqida xabar beramiz
-  const from = msg.from;
-  const fromLabel = from.username ? `@${from.username}` : `${from.first_name || ''} (ID: ${from.id})`;
-
-  if (ADMIN_CHAT_ID) {
-    try {
-      const sentToAdmin = await bot.sendMessage(
-        ADMIN_CHAT_ID,
-        `🎯 <b>Yangi mandat so'rovi</b>\n\n` +
-          `👤 ${fromLabel}\n` +
-          `📚 Fanlar majmuasi: <b>${subject}</b>\n` +
-          `🔢 DTM balli: <b>${ball}</b>\n\n` +
-          `<i>Ushbu xabarga "Reply" qilib, foydalanuvchiga qaysi yo'nalish(lar)ga kira olishi haqida javob yozing — ` +
-          `javobingiz avtomatik shu foydalanuvchiga yetkaziladi.</i>\n` +
-          `🆔 <code>${msg.chat.id}</code>`,
-        { parse_mode: 'HTML' }
-      );
-      feedbackReplyMap.set(sentToAdmin.message_id, msg.chat.id);
-    } catch (err) {
-      console.error('Mandat so\'rovini adminga yuborishda xatolik:', err.message);
-    }
-  } else {
-    console.log(`[MANDAT SO'ROVI] ${fromLabel} — ${subject} — ball: ${ball}`);
-  }
-
-  try {
-    await bot.sendMessage(
-      msg.chat.id,
-      `⏳ So'rovingiz qabul qilindi. Aniq qaysi yo'nalish(lar)ga kira olishingiz haqida ` +
-        `<b>iltimos, admin javobini kuting</b> — tez orada shaxsan javob beramiz.`,
-      { parse_mode: 'HTML' }
-    );
-  } catch (err) {
-    console.error("Mandat kutish xabarini yuborishda xatolik:", err.message);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// "Yo'nalish bo'yicha qidirish" — foydalanuvchi o'zining fanlar majmuasini qo'lda yozganda
+// "Mandat tanlash" — foydalanuvchi o'zining fanlar majmuasini qo'lda yozganda
 // ---------------------------------------------------------------------------
 bot.on('message', async (msg) => {
   if (msg.web_app_data) return;
@@ -1341,7 +1001,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  await askForYonalishBall(msg.chat.id, userId, subject);
+  await askForYonalishTil(msg.chat.id, userId, subject);
 });
 
 // ---------------------------------------------------------------------------
@@ -1377,100 +1037,64 @@ bot.on('message', async (msg) => {
   awaitingYonalishBall.delete(userId);
   const subject = pendingYonalishSubject.get(userId) || 'Kiritilmagan';
   pendingYonalishSubject.delete(userId);
+  const til = pendingYonalishTil.get(userId) || '';
+  const shakl = pendingYonalishShakl.get(userId) || '';
+  pendingYonalishTil.delete(userId);
+  pendingYonalishShakl.delete(userId);
 
-  const results = searchYonalishBySubject(subject);
-  const chunks = formatYonalishBallResults(subject, ball, results);
+  const tanlovLabel = [til, shakl].filter(Boolean).join(' · ');
+
+  // Rasmiy minimal chegaradan past ball bilan hech qanday yo'nalishga
+  // (na grant, na kontrakt) kirish imkoni yo'q — bu holda ro'yxat ko'rsatilmaydi
+  if (ball < MIN_KIRISH_BALL) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        `🔴 <b>Balingiz: ${ball}</b>\n\n` +
+          `Afsuski, <b>${MIN_KIRISH_BALL}</b> balldan past ball bilan hech qanday yo'nalishga ` +
+          `(na grant, na kontrakt asosida) kira olmaysiz.\n\n` +
+          `<i>Keyingi safar tayyorgarlikni kuchaytiring 💪.</i>`,
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+      );
+    } catch (err) {
+      console.error("Yo'nalish past ball xabarini yuborishda xatolik:", err.message);
+    }
+    return;
+  }
+
+  const allResults = searchYonalishBySubject(subject).filter((r) => matchesTilShakl(r, til, shakl));
+  const qualifying = allResults
+    .map((r) => {
+      const cls = classifyYonalishItem(r, ball);
+      return { ...r, _status: cls.status, _qualifies: cls.qualifies };
+    })
+    .filter((r) => r._qualifies);
+
+  if (!qualifying.length) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        `🔴 <b>${subject}</b>${tanlovLabel ? ` (${tanlovLabel})` : ''} fanlar majmuasi va <b>${ball}</b> ball bilan hozircha hech qanday ` +
+          `yo'nalishga (na grant, na kontrakt) kira olmaysiz.\n\n` +
+          `<i>Fanlar majmuasini boshqacharoq yozib ko'ring yoki keyingi safar tayyorgarlikni kuchaytiring 💪.</i>`,
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+      );
+    } catch (err) {
+      console.error("Yo'nalish natija topilmadi xabarini yuborishda xatolik:", err.message);
+    }
+    return;
+  }
+
+  yonalishResultsState.set(userId, { subject, ball, items: qualifying, page: 0 });
+  const { text, keyboard } = renderYonalishResultsPage(userId);
 
   try {
-    for (let i = 0; i < chunks.length; i++) {
-      const isLast = i === chunks.length - 1;
-      await bot.sendMessage(msg.chat.id, chunks[i], {
-        parse_mode: 'HTML',
-        // Orqaga tugmasi faqat oxirgi xabarga qo'shiladi
-        reply_markup: isLast ? { inline_keyboard: [backRow] } : undefined,
-      });
-    }
+    await bot.sendMessage(msg.chat.id, text, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+    });
   } catch (err) {
     console.error("Yo'nalish qidiruv natijasini yuborishda xatolik:", err.message);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// "Mandat tanlash" — foydalanuvchi o'zining fanlar majmuasini qo'lda yozganda
-// ---------------------------------------------------------------------------
-bot.on('message', async (msg) => {
-  if (msg.web_app_data) return;
-  if (msg._relayedToUser) return;
-  if (!msg.text) return;
-
-  const userId = msg.from.id;
-  if (!awaitingMandatCustomSubject.has(userId)) return;
-
-  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
-
-  const subject = msg.text.trim();
-  awaitingMandatCustomSubject.delete(userId);
-
-  if (!subject) {
-    awaitingMandatCustomSubject.add(userId);
-    try {
-      await bot.sendMessage(msg.chat.id, '❗️ Iltimos, fanlar majmuasini matn ko\'rinishida yozing.');
-    } catch (err) {
-      console.error('Fanlar majmuasi validatsiya xabari xatosi:', err.message);
-    }
-    return;
-  }
-
-  await askForMandatBall(msg.chat.id, userId, subject);
-});
-
-// ---------------------------------------------------------------------------
-// Admin PDF yuklash — "Majburiy Ona tili" bazasiga PDF qo'shish
-// Admin ADMIN_CHAT_ID chatiga PDF faylni quyidagi formatdagi izoh (caption) bilan
-// yuborsa, u avtomatik bazaga saqlanadi (Reply emas, oddiy yangi xabar sifatida):
-//   18-iyul 1-smena
-//   18-iyul 2-smena
-// (kun: 18, 19, 20, 21 yoki 22; smena: 1 yoki 2)
-// ---------------------------------------------------------------------------
-const PDF_CAPTION_REGEX = /^(\d{2})-iyul\s+(1|2)-smena$/i;
-
-bot.on('message', async (msg) => {
-  if (!ADMIN_CHAT_ID) return;
-  if (String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
-  if (msg.reply_to_message) return; // Reply orqali kelgan javoblar boshqa handlerda qayta ishlanadi
-  if (!msg.document) return;
-
-  const caption = (msg.caption || '').trim();
-  const match = caption.match(PDF_CAPTION_REGEX);
-  if (!match) return;
-
-  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
-
-  const dateKey = match[1];
-  const smena = match[2];
-  const dateLabel = `${dateKey}-iyul`;
-
-  const isPdf =
-    msg.document.mime_type === 'application/pdf' || /\.pdf$/i.test(msg.document.file_name || '');
-  if (!isPdf) {
-    try {
-      await bot.sendMessage(msg.chat.id, '❗️ Faqat PDF fayl yuklang.');
-    } catch (err) {
-      console.error('PDF format ogohlantirishi xatosi:', err.message);
-    }
-    return;
-  }
-
-  setPdfFileId(dateKey, smena, msg.document.file_id);
-
-  try {
-    await bot.sendMessage(
-      msg.chat.id,
-      `✅ <b>${dateLabel}, ${smena}-smena</b> uchun PDF bazaga saqlandi.`,
-      { parse_mode: 'HTML' }
-    );
-  } catch (err) {
-    console.error('PDF saqlash tasdiqlash xabari xatosi:', err.message);
   }
 });
 
@@ -1526,7 +1150,7 @@ bot.on('message', async (msg) => {
   if (msg.web_app_data) return;
   // Admin fikr-mulohazaga javob berayotgan xabar yuqorida allaqachon qayta ishlandi
   if (msg._relayedToUser) return;
-  // "Majburiy Ona tili" oqimidagi xabar yuqorida allaqachon qayta ishlandi
+  // "Admin 24/7" / "Mandat tanlash" oqimidagi xabar yuqorida allaqachon qayta ishlandi
   if (msg._orderFlow) return;
   // Buyruqlarni o'tkazib yuboramiz; matn ham, rasm ham bo'lmasa — chiqib ketamiz
   if (msg.text && msg.text.startsWith('/')) return;
@@ -1627,42 +1251,6 @@ bot.on('callback_query', async (query) => {
   }
 
   // "Mandat tanlash" — foydalanuvchi ro'yxatdan fanlar majmuasini tanladi
-  if (query.data && query.data.startsWith('mandat_subj_') && query.data !== 'mandat_subj_custom') {
-    const index = parseInt(query.data.replace('mandat_subj_', ''), 10);
-    const subject = MANDAT_SUBJECT_OPTIONS[index];
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    await deleteMessageSafe(chatId, messageId);
-    if (!subject) return;
-    await askForMandatBall(chatId, userId, subject);
-    return;
-  }
-
-  // "Mandat tanlash" — foydalanuvchi o'zi fanlar majmuasini yozmoqchi
-  if (query.data === 'mandat_subj_custom') {
-    awaitingMandatCustomSubject.add(userId);
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    await deleteMessageSafe(chatId, messageId);
-    try {
-      await bot.sendMessage(
-        chatId,
-        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
-        { parse_mode: 'HTML' }
-      );
-    } catch (err) {
-      console.error('Fanlar majmuasi so\'rash xabari xatosi:', err.message);
-    }
-    return;
-  }
-
-  // "Yo'nalish bo'yicha qidirish" — foydalanuvchi ro'yxatdan fanlar majmuasini tanladi
   if (query.data && query.data.startsWith('yon_subj_') && query.data !== 'yon_subj_custom') {
     const index = parseInt(query.data.replace('yon_subj_', ''), 10);
     const subject = MANDAT_SUBJECT_OPTIONS[index];
@@ -1673,7 +1261,7 @@ bot.on('callback_query', async (query) => {
     }
     await deleteMessageSafe(chatId, messageId);
     if (!subject) return;
-    await askForYonalishBall(chatId, userId, subject);
+    await askForYonalishTil(chatId, userId, subject);
     return;
   }
 
@@ -1694,6 +1282,50 @@ bot.on('callback_query', async (query) => {
       );
     } catch (err) {
       console.error("Yo'nalish fanlar majmuasi so'rash xabari xatosi:", err.message);
+    }
+    return;
+  }
+
+  // "Mandat tanlash" — ta'lim tili tanlandi
+  if (query.data === 'yon_til_uz' || query.data === 'yon_til_ru') {
+    pendingYonalishTil.set(userId, query.data === 'yon_til_uz' ? "O'zbek" : 'Rus');
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    await askForYonalishShakl(chatId, userId);
+    return;
+  }
+
+  // "Mandat tanlash" — ta'lim shakli tanlandi
+  if (query.data === 'yon_shakl_kunduzgi' || query.data === 'yon_shakl_masofaviy') {
+    pendingYonalishShakl.set(userId, query.data === 'yon_shakl_kunduzgi' ? 'Kunduzgi' : 'Masofaviy');
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    await askForYonalishBall(chatId, userId);
+    return;
+  }
+
+  // "Mandat tanlash" natijalari — sahifalash (Keyingisi/Oldingisi)
+  if (query.data === 'yon_page_next' || query.data === 'yon_page_prev') {
+    const state = yonalishResultsState.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!state) return;
+
+    state.page += query.data === 'yon_page_next' ? 1 : -1;
+    const rendered = renderYonalishResultsPage(userId);
+    if (rendered) {
+      await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
     }
     return;
   }
@@ -1723,135 +1355,6 @@ bot.on('callback_query', async (query) => {
         });
       } catch (err) {
         console.error('answerCallbackQuery xatosi:', err.message);
-      }
-    }
-    return;
-  }
-
-  // Referal holatini qayta tekshirish
-  if (query.data === 'md_check_referral') {
-    if (hasEnoughReferrals(userId)) {
-      try {
-        await bot.answerCallbackQuery(query.id, { text: "✅ Tabriklaymiz, ochildi!" });
-      } catch (err) {
-        console.error('answerCallbackQuery xatosi:', err.message);
-      }
-      await deleteMessageSafe(chatId, messageId);
-      const { text, keyboard } = monaTiliDatesScreen();
-      await safeSend(chatId, text, keyboard);
-    } else {
-      try {
-        await bot.answerCallbackQuery(query.id, {
-          text: "❌ Hali yetarli emas. Do'stingizni taklif qiling.",
-          show_alert: true,
-        });
-      } catch (err) {
-        console.error('answerCallbackQuery xatosi:', err.message);
-      }
-      const link = await buildReferralLink(userId);
-      const { text, keyboard } = referralGateScreen(userId, link);
-      await safeEdit(chatId, messageId, text, keyboard);
-    }
-    return;
-  }
-
-  // "Majburiy Ona tili" oqimidagi boshqa barcha tugmalar uchun referal himoyasi
-  // (masalan, foydalanuvchida eski, tekshiruvdan oldingi klaviatura qolib ketgan bo'lsa)
-  if (query.data && query.data.startsWith('md_') && !hasEnoughReferrals(userId)) {
-    await deleteMessageSafe(chatId, messageId);
-    try {
-      await bot.answerCallbackQuery(query.id, {
-        text: "❌ Avval kamida 1 ta do'stingizni taklif qiling.",
-        show_alert: true,
-      });
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    const link = await buildReferralLink(userId);
-    const { text, keyboard } = referralGateScreen(userId, link);
-    await safeSend(chatId, text, keyboard);
-    return;
-  }
-
-  // "Majburiy Ona tili" oqimi — kun tanlandi
-  if (query.data && query.data.startsWith('md_date_')) {
-    const dateKey = query.data.replace('md_date_', '');
-    const dateLabel = `${dateKey}-iyul`;
-
-    await deleteMessageSafe(chatId, messageId);
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-
-    if (dateKey === '23') {
-      try {
-        await bot.sendSticker(chatId, SOON_STICKER_ID);
-      } catch (err) {
-        console.error('"Tez kunda" stikerini yuborishda xatolik:', err.message);
-      }
-      const { text, keyboard } = monaTiliSoonScreen();
-      await safeSend(chatId, text, keyboard);
-    } else {
-      const { text, keyboard } = monaTiliSmenaScreen(dateLabel, dateKey);
-      await safeSend(chatId, text, keyboard);
-    }
-    return;
-  }
-
-  // "Majburiy Ona tili" oqimi — kunlar ro'yxatiga qaytish
-  if (query.data === 'md_dates_back') {
-    await deleteMessageSafe(chatId, messageId);
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-
-    const { text, keyboard } = monaTiliDatesScreen();
-    await safeSend(chatId, text, keyboard);
-    return;
-  }
-
-  // "Majburiy Ona tili" oqimi — smena tanlandi, mos PDF yuboriladi
-  if (query.data && query.data.startsWith('md_smena_')) {
-    const parts = query.data.split('_'); // ['md', 'smena', '1'|'2', dateKey]
-    const smena = parts[2];
-    const dateKey = parts[3];
-    const dateLabel = `${dateKey}-iyul`;
-
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-
-    const fileId = getPdfFileId(dateKey, smena);
-    if (!fileId) {
-      try {
-        await bot.sendMessage(
-          chatId,
-          `❌ <b>${dateLabel}, ${smena}-smena</b> uchun material hali yuklanmagan. Keyinroq urinib ko'ring.`,
-          { parse_mode: 'HTML' }
-        );
-      } catch (err) {
-        console.error('PDF topilmadi xabari xatosi:', err.message);
-      }
-      return;
-    }
-
-    try {
-      await bot.sendDocument(chatId, fileId, {
-        caption: `${emoji(EMOJI.pdfIcon, '📄')} <b>${dateLabel} — ${smena}-smena</b>`,
-        parse_mode: 'HTML',
-      });
-    } catch (err) {
-      console.error('PDF yuborishda xatolik:', err.message);
-      try {
-        await bot.sendMessage(chatId, '❌ PDF yuborishda xatolik yuz berdi.');
-      } catch (e) {
-        console.error('PDF xato xabari yuborishda muammo:', e.message);
       }
     }
     return;
@@ -1901,6 +1404,9 @@ bot.on('callback_query', async (query) => {
   awaitingYonalishCustomSubject.delete(userId);
   awaitingYonalishBall.delete(userId);
   pendingYonalishSubject.delete(userId);
+  pendingYonalishTil.delete(userId);
+  pendingYonalishShakl.delete(userId);
+  yonalishResultsState.delete(userId);
 
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
