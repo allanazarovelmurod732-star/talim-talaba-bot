@@ -6,6 +6,10 @@ const TelegramBot = require('node-telegram-bot-api');
 
 // Asosiy menyu tepasidagi banner rasm (assets papkasida bo'lishi shart)
 const MAIN_BANNER_PATH = path.join(__dirname, 'assets', 'banner.jpg');
+// "Botni baholang" ekrani tepasidagi rasm (assets papkasida bo'lishi shart)
+const RATING_BANNER_PATH = path.join(__dirname, 'assets', 'baho_banner.jpg');
+// "Mandat tanlash" (fanlar majmuasi) ekrani tepasidagi rasm (assets papkasida bo'lishi shart)
+const MANDAT_BANNER_PATH = path.join(__dirname, 'assets', 'mandat_banner.jpg');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
@@ -395,6 +399,8 @@ function renderYonalishResultsPage(userId) {
 // bot.getMe() natijasini keshlab qo'yamiz — har xabarda qayta so'ramaslik uchun
 let BOT_USERNAME = '';
 let CACHED_BANNER_FILE_ID = null; // banner rasmni bir marta yuklab, keyin file_id orqali qayta ishlatamiz
+let CACHED_RATING_BANNER_FILE_ID = null; // "Botni baholang" banner rasmi uchun file_id keshi
+let CACHED_MANDAT_BANNER_FILE_ID = null; // "Mandat tanlash" banner rasmi uchun file_id keshi
 // Admin (ADMIN_CHAT_ID) fikr-mulohaza (yoki buyurtma) xabariga "Reply" qilsa,
 // javobni asl yozgan foydalanuvchiga qaytarish uchun: adminga yuborilgan xabar ID -> foydalanuvchi chat ID
 const feedbackReplyMap = new Map();
@@ -1170,6 +1176,65 @@ async function sendMainMenu(chatId, isGroup = false) {
   }
 }
 
+// "Botni baholang" ekranini tepasida rasm bilan yuboradi (yangi xabar sifatida)
+async function sendRatingScreen(chatId, html, keyboard) {
+  try {
+    const photoSource = CACHED_RATING_BANNER_FILE_ID || RATING_BANNER_PATH;
+    const sent = await bot.sendPhoto(chatId, photoSource, {
+      caption: html,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+    });
+    if (!CACHED_RATING_BANNER_FILE_ID) {
+      const photos = sent.photo;
+      if (photos && photos.length) {
+        CACHED_RATING_BANNER_FILE_ID = photos[photos.length - 1].file_id;
+      }
+    }
+    return sent;
+  } catch (err) {
+    console.error('sendPhoto xatosi (baho banner), faqat matn yuborilmoqda:', err.message);
+    await safeSend(chatId, html, keyboard);
+  }
+}
+
+// "Botni baholang" ekranidagi mavjud rasmli xabarning caption va tugmalarini yangilaydi
+async function editRatingScreen(chatId, messageId, html, keyboard) {
+  try {
+    await bot.editMessageCaption(html, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+    });
+  } catch (err) {
+    if (String(err.message).includes('message is not modified')) return;
+    console.error('editMessageCaption xatosi (baho):', err.message);
+  }
+}
+
+// "Mandat tanlash" (fanlar majmuasi) ekranini tepasida rasm bilan yuboradi
+async function sendMandatScreen(chatId, html, keyboard) {
+  try {
+    const photoSource = CACHED_MANDAT_BANNER_FILE_ID || MANDAT_BANNER_PATH;
+    const sent = await bot.sendPhoto(chatId, photoSource, {
+      caption: html,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+    });
+    if (!CACHED_MANDAT_BANNER_FILE_ID) {
+      const photos = sent.photo;
+      if (photos && photos.length) {
+        CACHED_MANDAT_BANNER_FILE_ID = photos[photos.length - 1].file_id;
+      }
+    }
+    return sent;
+  } catch (err) {
+    console.error('sendPhoto xatosi (mandat banner), faqat matn yuborilmoqda:', err.message);
+    await safeSend(chatId, html, keyboard);
+  }
+}
+
 async function deleteMessageSafe(chatId, messageId) {
   try {
     await bot.deleteMessage(chatId, messageId);
@@ -1801,7 +1866,7 @@ bot.on('callback_query', async (query) => {
     const { text, keyboard } = ratingScreen(userId);
     const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
     const outText = isGroup ? stripTgEmoji(text) : text;
-    await safeSend(chatId, outText, outKeyboard);
+    await sendRatingScreen(chatId, outText, outKeyboard);
     return;
   }
 
@@ -1817,7 +1882,7 @@ bot.on('callback_query', async (query) => {
       console.error('answerCallbackQuery xatosi:', err.message);
     }
     const { text, keyboard } = ratingScreen(userId);
-    await safeEdit(chatId, messageId, text, keyboard);
+    await editRatingScreen(chatId, messageId, text, keyboard);
     return;
   }
 
@@ -1850,7 +1915,7 @@ bot.on('callback_query', async (query) => {
         console.error('answerCallbackQuery xatosi:', err.message);
       }
       const { text, keyboard } = ratingScreen(userId);
-      await safeEdit(chatId, messageId, text, keyboard);
+      await editRatingScreen(chatId, messageId, text, keyboard);
       return;
     }
 
@@ -1863,7 +1928,7 @@ bot.on('callback_query', async (query) => {
     const thankYouText =
       `${'⭐'.repeat(selected)}\n\n` +
       `Bahoyingiz uchun rahmat! Siz bizning yaxshilanishimizga yordam bermoqdasiz! 🙏`;
-    await safeEdit(chatId, messageId, thankYouText, [backRow]);
+    await editRatingScreen(chatId, messageId, thankYouText, [backRow]);
     return;
   }
 
@@ -1952,6 +2017,10 @@ bot.on('callback_query', async (query) => {
 
   if (query.data === 'menu_back') {
     await sendMainMenu(chatId, isGroup);
+  } else if (query.data === 'menu_yonalish') {
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await sendMandatScreen(chatId, outText, outKeyboard);
   } else {
     const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
     const outText = isGroup ? stripTgEmoji(text) : text;
