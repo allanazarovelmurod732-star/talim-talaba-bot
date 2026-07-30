@@ -138,11 +138,16 @@ const yonalishResultsState = new Map();
 function classifyYonalishItem(item, ball) {
   const grantBall = item.grantBall !== undefined && item.grantBall !== null && item.grantBall !== '' ? Number(item.grantBall) : null;
   const kontraktBall = item.kontraktBall !== undefined && item.kontraktBall !== null && item.kontraktBall !== '' ? Number(item.kontraktBall) : null;
+  const grantKvota = Number(item.grantKvota) || 0;
+  const kontraktKvota = Number(item.kontraktKvota) || 0;
 
-  if (grantBall !== null && ball >= grantBall) {
+  // Kvotasi 0 (yoki umuman yo'q) bo'lsa, o'sha turdagi qabul (grant yoki
+  // kontrakt) mavjud emas deb hisoblanadi — ball yetsa ham, o'rin yo'q
+  // bo'lgani uchun bu yo'nalish "kira oladi" deb ko'rsatilmaydi.
+  if (grantKvota > 0 && grantBall !== null && ball >= grantBall) {
     return { qualifies: true, status: '🟢 Balingiz grantga yetadi' };
   }
-  if (kontraktBall !== null && ball >= kontraktBall) {
+  if (kontraktKvota > 0 && kontraktBall !== null && ball >= kontraktBall) {
     return { qualifies: true, status: '🔵 Balingiz faqat kontraktga yetadi' };
   }
   return { qualifies: false, status: null };
