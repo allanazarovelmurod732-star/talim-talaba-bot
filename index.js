@@ -159,6 +159,72 @@ function removeFromTanlov(userId, index) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// "Botni baholang" — foydalanuvchi 1 dan 5 tagacha yulduz bilan botni
+// baholaydi. Kuniga 2 martagacha baholash mumkin — shu limitni va
+// baholar tarixini diskka (BAHO_DB_PATH) saqlaymiz.
+// ---------------------------------------------------------------------------
+const BAHO_DB_PATH = path.join(DATA_DIR, 'baholar.json');
+const BAHO_KUNLIK_LIMIT = 2;
+
+// userId (string) -> { lastDate: 'YYYY-MM-DD', countToday: number, history: [{date, rating}] }
+let BAHO_DB = new Map();
+
+function loadBahoDb() {
+  try {
+    const raw = fs.readFileSync(BAHO_DB_PATH, 'utf8');
+    const obj = JSON.parse(raw);
+    BAHO_DB = new Map(Object.entries(obj));
+    console.log(`[BAHO] ${BAHO_DB.size} ta foydalanuvchi bahosi yuklandi.`);
+  } catch (err) {
+    BAHO_DB = new Map();
+  }
+}
+loadBahoDb();
+
+function saveBahoDb() {
+  try {
+    const obj = Object.fromEntries(BAHO_DB);
+    fs.writeFileSync(BAHO_DB_PATH, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[BAHO] Saqlashda xatolik:', err.message);
+  }
+}
+
+function todayDateStr() {
+  return new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+}
+
+// Foydalanuvchi bugun yana nechta marta baholay olishini qaytaradi (0, 1 yoki BAHO_KUNLIK_LIMIT)
+function bahoQolganSoni(userId) {
+  const rec = BAHO_DB.get(String(userId));
+  const today = todayDateStr();
+  if (!rec || rec.lastDate !== today) return BAHO_KUNLIK_LIMIT;
+  return Math.max(0, BAHO_KUNLIK_LIMIT - rec.countToday);
+}
+
+// Bahoni saqlaydi. Natija: { ok: true, remaining } yoki { ok: false, remaining: 0 } (limit tugagan)
+function recordBaho(userId, rating) {
+  const today = todayDateStr();
+  const key = String(userId);
+  let rec = BAHO_DB.get(key);
+
+  if (!rec || rec.lastDate !== today) {
+    rec = { lastDate: today, countToday: 0, history: rec ? rec.history || [] : [] };
+  }
+
+  if (rec.countToday >= BAHO_KUNLIK_LIMIT) {
+    return { ok: false, remaining: 0 };
+  }
+
+  rec.countToday += 1;
+  rec.history.push({ date: today, rating });
+  BAHO_DB.set(key, rec);
+  saveBahoDb();
+
+  return { ok: true, remaining: BAHO_KUNLIK_LIMIT - rec.countToday };
+}
+
 // Matnni solishtirish uchun kichik harfga o'tkazadi, tirnoqlarni va ortiqcha
 // bo'shliqlarni tozalaydi
 function normalizeText(s) {
@@ -531,6 +597,7 @@ const EMOJI = {
   giftIcon: '5449800250032143374',
   backIcon: '5411112567609243032',
   checkIcon: '5206607081334906820',
+  starIcon: '6005661956931850799',
 };
 
 // ---------------------------------------------------------------------------
@@ -661,6 +728,7 @@ function mainMenuScreen() {
     [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
     [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
     [btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })],
+    [btn({ text: 'Botni baholang', callback_data: 'menu_baho', icon: EMOJI.starIcon, style: 'success' })],
   ];
 
   if (MINI_APP_URL) {
@@ -815,9 +883,51 @@ function tanlovScreen(userId) {
 }
 
 // ---------------------------------------------------------------------------
-// "Mandat tanlash" (avvalgi "Yo'nalish bo'yicha qidirish") — fanlar majmuasi
-// bo'yicha admin bilan aniq maslahat oqimi
+// "Botni baholang" — foydalanuvchi yulduzlar sonini tanlaydi, so'ng
+// "✅ Yuborish" tugmasini bosib tasdiqlaydi (kuniga 2 martagacha)
 // ---------------------------------------------------------------------------
+// userId -> tanlangan (lekin hali yuborilmagan) yulduzlar soni (1-5)
+const pendingBahoSelection = new Map();
+
+function ratingScreen(userId) {
+  const selected = pendingBahoSelection.get(userId) || null;
+  const remaining = bahoQolganSoni(userId);
+
+  if (remaining <= 0) {
+    const text =
+      `⭐ <b>Botni baholang</b>\n\n` +
+      `Siz bugun allaqachon <b>${BAHO_KUNLIK_LIMIT}</b> marta baholadingiz. ` +
+      `Rahmat! Ertaga yana baholashingiz mumkin bo'ladi 🙏`;
+    return { text, keyboard: [backRow] };
+  }
+
+  const text =
+    `⭐ <b>Botni baholang</b>\n\n` +
+    `Bot sizga qanchalik foydali bo'ldi? Yulduzlar sonini tanlang, so'ng ` +
+    `<b>"✅ Yuborish"</b> tugmasini bosing.\n\n` +
+    `<i>Bugun yana ${remaining} marta baholashingiz mumkin.</i>`;
+
+  const keyboard = [];
+  for (let n = 1; n <= 5; n++) {
+    keyboard.push([
+      btn({
+        text: '⭐'.repeat(n),
+        callback_data: `baho_select_${n}`,
+        icon: EMOJI.starIcon,
+        style: selected === n ? 'success' : 'primary',
+      }),
+    ]);
+  }
+
+  if (selected) {
+    keyboard.push([btn({ text: '✅ Yuborish', callback_data: 'baho_submit', style: 'success' })]);
+  }
+  keyboard.push(backRow);
+
+  return { text, keyboard };
+}
+
+
 // Fanlar majmuasi tugmalari ro'yxati (kerak bo'lsa shu massivga qo'shib/o'zgartirib turing)
 const MANDAT_SUBJECT_OPTIONS = [
   'Biologiya + Kimyo',
@@ -1678,6 +1788,85 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "Botni baholang" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
+  // umumiy SCREENS ro'yxatidan alohida ishlanadi)
+  if (query.data === 'menu_baho') {
+    pendingBahoSelection.delete(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    const { text, keyboard } = ratingScreen(userId);
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await safeSend(chatId, outText, outKeyboard);
+    return;
+  }
+
+  // "Botni baholang" — yulduzlar sonini tanlash (hali yubormaydi, faqat belgilaydi)
+  if (query.data && query.data.startsWith('baho_select_')) {
+    const n = parseInt(query.data.replace('baho_select_', ''), 10);
+    if (n >= 1 && n <= 5) {
+      pendingBahoSelection.set(userId, n);
+    }
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    const { text, keyboard } = ratingScreen(userId);
+    await safeEdit(chatId, messageId, text, keyboard);
+    return;
+  }
+
+  // "Botni baholang" — tanlangan bahoni yuborish (kuniga 2 martagacha)
+  if (query.data === 'baho_submit') {
+    const selected = pendingBahoSelection.get(userId);
+
+    if (!selected) {
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: '⚠️ Avval yulduzlar sonini tanlang.',
+          show_alert: true,
+        });
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+      return;
+    }
+
+    const res = recordBaho(userId, selected);
+    pendingBahoSelection.delete(userId);
+
+    if (!res.ok) {
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: `⚠️ Siz bugun allaqachon ${BAHO_KUNLIK_LIMIT} marta baholadingiz. Ertaga qayta urinib ko'ring!`,
+          show_alert: true,
+        });
+      } catch (err) {
+        console.error('answerCallbackQuery xatosi:', err.message);
+      }
+      const { text, keyboard } = ratingScreen(userId);
+      await safeEdit(chatId, messageId, text, keyboard);
+      return;
+    }
+
+    try {
+      await bot.answerCallbackQuery(query.id, { text: '✅ Bahoyingiz yuborildi!' });
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const thankYouText =
+      `${'⭐'.repeat(selected)}\n\n` +
+      `Bahoyingiz uchun rahmat! Siz bizning yaxshilanishimizga yordam bermoqdasiz! 🙏`;
+    await safeEdit(chatId, messageId, thankYouText, [backRow]);
+    return;
+  }
+
   // Obunani qayta tekshirish
   if (query.data === 'check_subscription') {
     let subscribed = false;
@@ -1756,6 +1945,7 @@ bot.on('callback_query', async (query) => {
   pendingYonalishShakl.delete(userId);
   pendingYonalishQabulTuri.delete(userId);
   yonalishResultsState.delete(userId);
+  pendingBahoSelection.delete(userId);
 
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
