@@ -1033,13 +1033,13 @@ function yonalishTilScreen(subject) {
     `🌐 Ta'lim tilini tanlang 👇`;
 
   const keyboard = [
-    [btn({ text: "O'zbek", callback_data: 'yon_til_uz', style: 'primary' })],
-    [btn({ text: 'Rus', callback_data: 'yon_til_ru', style: 'success' })],
-    [btn({ text: 'Qoraqalpoq', callback_data: 'yon_til_qq', style: 'primary' })],
-    [btn({ text: 'Qozoq', callback_data: 'yon_til_qz', style: 'success' })],
-    [btn({ text: "Qirg'iz", callback_data: 'yon_til_kg', style: 'primary' })],
-    [btn({ text: 'Tojik', callback_data: 'yon_til_tj', style: 'success' })],
-    [btn({ text: 'Turkman', callback_data: 'yon_til_tk', style: 'primary' })],
+    [btn({ text: "O'zbek", callback_data: 'yon_til_uz', style: 'primary', icon: '5271648932194195260' })],
+    [btn({ text: 'Rus', callback_data: 'yon_til_ru', style: 'success', icon: '5305587746587300980' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: 'yon_til_qq', style: 'primary', icon: '5364282834078939253' })],
+    [btn({ text: 'Qozoq', callback_data: 'yon_til_qz', style: 'success', icon: '5244446228543983332' })],
+    [btn({ text: "Qirg'iz", callback_data: 'yon_til_kg', style: 'primary', icon: '6323615997852910673' })],
+    [btn({ text: 'Tojik', callback_data: 'yon_til_tj', style: 'success', icon: '5244570589322039598' })],
+    [btn({ text: 'Turkman', callback_data: 'yon_til_tk', style: 'primary', icon: '5431468139906901536' })],
     backRow,
   ];
 
