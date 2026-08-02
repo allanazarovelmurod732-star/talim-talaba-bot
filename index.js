@@ -152,6 +152,8 @@ async function fetchMandatById(entrantId) {
   return result;
 }
 
+// Foydalanuvchi hozir o'z abituriyent ID'ini kiritishini kutayotgan bo'lsak, shu Set ichida turadi
+const awaitingMandatId = new Set();
 
 function formatMandatIdResult(result, entrantId) {
   if (!result || !result.name) {
