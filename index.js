@@ -1254,6 +1254,15 @@ const KQ_LANG_LABELS = {
 };
 // userId -> { subject, s4subject, s5subject, edLangId, langLabel, page, cards, hasNext }
 const kqResultsState = new Map();
+// Fanlar majmuasi + til tanlangandan keyin, "to'liq ro'yxat" yoki "ID orqali
+// o'rnini topish" tanlangunga qadar vaqtincha shu yerda saqlanadi
+// (userId -> { subject, s4subject, s5subject, edLangId, langLabel })
+const pendingKQFilters = new Map();
+// Foydalanuvchi "ID orqali o'rnini topish"ni tanlab, ID kiritishini kutayotgan bo'lsak, shu Set ichida turadi
+const awaitingKQId = new Set();
+// ID bo'yicha qidirishda, cheksiz so'rov yubormaslik uchun tekshiriladigan
+// maksimal sahifalar soni (300 sahifa = 3000 kishigacha)
+const MAX_KQ_ID_SEARCH_PAGES = 300;
 
 function kengaytirilganSubjectScreen() {
   const text =
@@ -1292,6 +1301,23 @@ async function askForKQLang(chatId, userId, subject) {
   pendingKQSubject.set(userId, subject);
   const { text, keyboard } = kengaytirilganLangScreen(subject);
   await safeSend(chatId, text, keyboard);
+}
+
+// Fanlar majmuasi va til tanlangandan keyin — to'liq ro'yxatni ko'rishni yoki
+// ID orqali o'z o'rnini topishni tanlash ekrani
+function kengaytirilganModeScreen(subject, langLabel) {
+  const text =
+    `✅ Fanlar majmuasi: <b>${subject}</b>\n` +
+    `✅ Ta'lim tili: <b>${langLabel}</b>\n\n` +
+    `Qanday ko'rmoqchisiz? 👇`;
+
+  const keyboard = [
+    [btn({ text: "📋 To'liq ro'yxatni ko'rish", callback_data: 'kq_mode_list', style: 'primary' })],
+    [btn({ text: "🆔 ID orqali o'rnimni topish", callback_data: 'kq_mode_id', style: 'success' })],
+    backRow,
+  ];
+
+  return { text, keyboard };
 }
 
 function formatKQCardLine(card, rank) {
@@ -1846,6 +1872,167 @@ bot.on('message', async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
+// "Kengaytirilgan qidiruv" — foydalanuvchi ID orqali o'z o'rnini kiritganda,
+// tanlangan fanlar majmuasi + til bo'yicha ro'yxatni sahifama-sahifa (saytdan
+// jonli) ko'rib, shu ID'ni topib, aynan nechanchi o'rinda ekanini aniqlaydi
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaitingKQId.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const entrantId = msg.text.trim();
+  if (!/^\d{7}$/.test(entrantId)) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "❗️ Iltimos, 7 xonali abituriyent ID raqamini to'g'ri kiriting (masalan: 5506347)."
+      );
+    } catch (err) {
+      console.error('Kengaytirilgan qidiruv ID validatsiya xabari xatosi:', err.message);
+    }
+    return; // holat saqlanadi — qayta urinish mumkin
+  }
+
+  awaitingKQId.delete(userId);
+
+  const filters = pendingKQFilters.get(userId);
+  if (!filters) {
+    try {
+      await bot.sendMessage(msg.chat.id, "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
+        reply_markup: { inline_keyboard: [backRow] },
+      });
+    } catch (err) {
+      console.error('Kengaytirilgan qidiruv filtr topilmadi xabari xatosi:', err.message);
+    }
+    return;
+  }
+
+  let progressMsgId = null;
+  try {
+    const progressMsg = await bot.sendMessage(
+      msg.chat.id,
+      `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda... (1-sahifa)`
+    );
+    progressMsgId = progressMsg.message_id;
+  } catch (err) {
+    console.error("Kengaytirilgan qidiruv ID 'qidirilmoqda' xabari xatosi:", err.message);
+  }
+
+  let foundCard = null;
+  let foundPage = null;
+  let foundIndex = null;
+  let foundPageCards = null;
+  let searchErr = null;
+
+  for (let page = 1; page <= MAX_KQ_ID_SEARCH_PAGES; page++) {
+    let cards;
+    try {
+      cards = await fetchKengaytirilganPage(filters.s4subject, filters.s5subject, filters.edLangId, page);
+    } catch (err) {
+      searchErr = err;
+      console.error('Kengaytirilgan qidiruv ID qidiruv xatosi:', err.message);
+      break;
+    }
+
+    const idx = cards.findIndex((c) => c.id === entrantId);
+    if (idx !== -1) {
+      foundCard = cards[idx];
+      foundPage = page;
+      foundIndex = idx;
+      foundPageCards = cards;
+      break;
+    }
+
+    if (cards.length < KQ_PAGE_SIZE) break; // ro'yxat shu yerda tugadi
+
+    // Progressni har 10 sahifada bir yangilaymiz (Telegram limitiga tushib qolmaslik uchun)
+    if (progressMsgId && page % 10 === 0) {
+      try {
+        await bot.editMessageText(
+          `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda... ` +
+            `(${page}-sahifa, ${page * KQ_PAGE_SIZE} kishi tekshirildi)`,
+          { chat_id: msg.chat.id, message_id: progressMsgId }
+        );
+      } catch (err) {}
+    }
+  }
+
+  pendingKQFilters.delete(userId);
+
+  if (searchErr) {
+    const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+    if (progressMsgId) {
+      try {
+        await bot.editMessageText(errText, {
+          chat_id: msg.chat.id,
+          message_id: progressMsgId,
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {}
+    } else {
+      await safeSend(msg.chat.id, errText, [backRow]);
+    }
+    return;
+  }
+
+  if (!foundCard) {
+    const notFoundText =
+      `❌ <b>#${entrantId}</b> ID "<b>${filters.subject}</b>" (${filters.langLabel}) ro'yxatidan topilmadi.\n\n` +
+      `<i>ID raqamini yoki fanlar majmuasi/tilni tekshirib qayta urinib ko'ring.</i>`;
+    if (progressMsgId) {
+      try {
+        await bot.editMessageText(notFoundText, {
+          chat_id: msg.chat.id,
+          message_id: progressMsgId,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {}
+    } else {
+      await safeSend(msg.chat.id, notFoundText, [backRow]);
+    }
+    return;
+  }
+
+  const rank = (foundPage - 1) * KQ_PAGE_SIZE + foundIndex + 1;
+
+  kqResultsState.set(userId, {
+    subject: filters.subject,
+    s4subject: filters.s4subject,
+    s5subject: filters.s5subject,
+    edLangId: filters.edLangId,
+    langLabel: filters.langLabel,
+    page: foundPage,
+    cards: foundPageCards,
+    hasNext: foundPageCards.length === KQ_PAGE_SIZE,
+  });
+
+  const rendered = renderKQPage(userId);
+  rendered.text = `✅ <b>#${entrantId} topildi — ${rank}-o'rinda!</b>\n\n${rendered.text}`;
+
+  if (progressMsgId) {
+    try {
+      await bot.editMessageText(rendered.text, {
+        chat_id: msg.chat.id,
+        message_id: progressMsgId,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: rendered.keyboard },
+      });
+    } catch (err) {
+      console.error('Kengaytirilgan qidiruv ID natijasini tahrirlashda xatolik:', err.message);
+    }
+  } else {
+    await safeSend(msg.chat.id, rendered.text, rendered.keyboard);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // "Yo'nalish bo'yicha qidirish" — foydalanuvchi DTM balini yozganda, mos
 // yo'nalishlarni data/yonalishlar.json bazasidan qidirib topadi
 // ---------------------------------------------------------------------------
@@ -2335,7 +2522,8 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // "Kengaytirilgan qidiruv" — ta'lim tili tanlandi -> saytdan 1-sahifani olib kelamiz
+  // "Kengaytirilgan qidiruv" — ta'lim tili tanlandi -> to'liq ro'yxat yoki ID
+  // orqali qidirishni tanlashni so'raymiz
   if (KQ_LANG_LABELS[query.data]) {
     const { edLangId, label } = KQ_LANG_LABELS[query.data];
     try {
@@ -2363,6 +2551,32 @@ bot.on('callback_query', async (query) => {
     }
     const [s4subject, s5subject] = parts;
 
+    pendingKQFilters.set(userId, { subject, s4subject, s5subject, edLangId, langLabel: label });
+
+    const { text, keyboard } = kengaytirilganModeScreen(subject, label);
+    await safeSend(chatId, text, keyboard);
+    return;
+  }
+
+  // "Kengaytirilgan qidiruv" — "To'liq ro'yxatni ko'rish" tanlandi -> saytdan 1-sahifani olib kelamiz
+  if (query.data === 'kq_mode_list') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const filters = pendingKQFilters.get(userId);
+    if (!filters) {
+      try {
+        await bot.sendMessage(chatId, "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {}
+      return;
+    }
+
     let thinkingMsgId = null;
     try {
       const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan qidirilmoqda...');
@@ -2374,7 +2588,7 @@ bot.on('callback_query', async (query) => {
     let cards = [];
     let fetchErr = null;
     try {
-      cards = await fetchKengaytirilganPage(s4subject, s5subject, edLangId, 1);
+      cards = await fetchKengaytirilganPage(filters.s4subject, filters.s5subject, filters.edLangId, 1);
     } catch (err) {
       fetchErr = err;
       console.error('Kengaytirilgan qidiruv xatosi:', err.message);
@@ -2397,11 +2611,11 @@ bot.on('callback_query', async (query) => {
     }
 
     kqResultsState.set(userId, {
-      subject,
-      s4subject,
-      s5subject,
-      edLangId,
-      langLabel: label,
+      subject: filters.subject,
+      s4subject: filters.s4subject,
+      s5subject: filters.s5subject,
+      edLangId: filters.edLangId,
+      langLabel: filters.langLabel,
       page: 1,
       cards,
       hasNext: cards.length === KQ_PAGE_SIZE,
@@ -2421,6 +2635,36 @@ bot.on('callback_query', async (query) => {
       }
     } else {
       await safeSend(chatId, rendered.text, rendered.keyboard);
+    }
+    return;
+  }
+
+  // "Kengaytirilgan qidiruv" — "ID orqali o'rnimni topish" tanlandi -> ID so'raymiz
+  if (query.data === 'kq_mode_id') {
+    if (!pendingKQFilters.has(userId)) {
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.",
+          show_alert: true,
+        });
+      } catch (err) {}
+      return;
+    }
+    awaitingKQId.add(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    try {
+      await bot.sendMessage(
+        chatId,
+        `🆔 Abituriyent ID raqamingizni (7 xonali) yozing, masalan: <b>5506347</b>.`,
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+      );
+    } catch (err) {
+      console.error("Kengaytirilgan qidiruv ID so'rash xabari xatosi:", err.message);
     }
     return;
   }
@@ -2697,6 +2941,8 @@ bot.on('callback_query', async (query) => {
   awaitingMandatId.delete(userId);
   awaitingKQCustomSubject.delete(userId);
   pendingKQSubject.delete(userId);
+  pendingKQFilters.delete(userId);
+  awaitingKQId.delete(userId);
   kqResultsState.delete(userId);
 
   const { text, keyboard } = screenFn();
