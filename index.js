@@ -91,6 +91,35 @@ function decodeUzApostrophe(s) {
   return String(s).replace(/&#x2018;|&#8216;|&rsquo;/g, "'").trim();
 }
 
+// hashId bo'yicha "Details" sahifasidan fanlar majmuasi/til/umumiy ball
+// tafsilotlarini oladi. fetchMandatById va Kengaytirilgan qidiruv ID
+// natijasida ham baravar ishlatiladi.
+async function fetchEntrantSubjectDetails(hashId) {
+  if (!hashId) return null;
+  try {
+    const detRes = await fetch(`https://mandat.uzbmb.uz/Bakalavr/Details?hashId=${hashId}`, {
+      headers: { 'User-Agent': MANDAT_UA },
+    });
+    if (!detRes.ok) return null;
+    const detHtml = await detRes.text();
+    const til = (detHtml.match(/Ta'lim tili:\s*<b>([^<]+)</) || [])[1];
+    const majburiy = (detHtml.match(/Majburiy fanlar<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
+    const fan1 = (detHtml.match(/1-mutaxassislik fani<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
+    const fan2 = (detHtml.match(/2-mutaxassislik fani<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
+    const umumiy = (detHtml.match(/Umumiy ball:\s*<br\s*\/?>\s*<b>([^<]+)</) || [])[1];
+    return {
+      til: til ? decodeUzApostrophe(til) : null,
+      majburiy: majburiy ? decodeUzApostrophe(majburiy) : null,
+      fan1: fan1 ? decodeUzApostrophe(fan1) : null,
+      fan2: fan2 ? decodeUzApostrophe(fan2) : null,
+      umumiy: umumiy ? decodeUzApostrophe(umumiy) : null,
+    };
+  } catch (err) {
+    console.error('Mandat Details olishda xatolik:', err.message);
+    return null; // Tafsilot olinmasa ham, asosiy natija baribir ko'rsatiladi
+  }
+}
+
 async function fetchMandatById(entrantId) {
   const searchUrl = `https://mandat.uzbmb.uz/Bakalavr/MainSearch?entrantid=${encodeURIComponent(entrantId)}&lang=uz`;
   const res = await fetch(searchUrl, { headers: { 'User-Agent': MANDAT_UA } });
@@ -118,34 +147,11 @@ async function fetchMandatById(entrantId) {
   };
 
   const hashId = hashMatch ? hashMatch[1] : null;
-  if (hashId) {
-    try {
-      const detRes = await fetch(`https://mandat.uzbmb.uz/Bakalavr/Details?hashId=${hashId}`, {
-        headers: { 'User-Agent': MANDAT_UA },
-      });
-      if (detRes.ok) {
-        const detHtml = await detRes.text();
-        const til = (detHtml.match(/Ta'lim tili:\s*<b>([^<]+)</) || [])[1];
-        const majburiy = (detHtml.match(/Majburiy fanlar<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
-        const fan1 = (detHtml.match(/1-mutaxassislik fani<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
-        const fan2 = (detHtml.match(/2-mutaxassislik fani<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
-        const umumiy = (detHtml.match(/Umumiy ball:\s*<br\s*\/?>\s*<b>([^<]+)</) || [])[1];
-        result.subjects = {
-          til: til ? decodeUzApostrophe(til) : null,
-          majburiy: majburiy ? decodeUzApostrophe(majburiy) : null,
-          fan1: fan1 ? decodeUzApostrophe(fan1) : null,
-          fan2: fan2 ? decodeUzApostrophe(fan2) : null,
-          umumiy: umumiy ? decodeUzApostrophe(umumiy) : null,
-        };
-      }
-    } catch (err) {
-      console.error('Mandat Details olishda xatolik:', err.message);
-      // Tafsilot olinmasa ham, asosiy natija baribir ko'rsatiladi
-    }
-  }
+  result.subjects = await fetchEntrantSubjectDetails(hashId);
 
   return result;
 }
+
 
 function formatMandatIdResult(result, entrantId) {
   if (!result || !result.name) {
@@ -239,8 +245,118 @@ async function fetchKengaytirilganPage(s4subject, s5subject, edLangId, pageNumbe
   return parseKQCards(html);
 }
 
-// Foydalanuvchi hozir o'z abituriyent ID'ini kiritishini kutayotgan bo'lsak, shu Set ichida turadi
-const awaitingMandatId = new Set();
+// Ball matnini ("142,700" yoki "142.700" kabi) taqqoslash uchun songa aylantiradi
+function parseKQScoreNumber(scoreText) {
+  if (!scoreText) return null;
+  const normalized = String(scoreText).replace(/\s/g, '').replace(',', '.');
+  const num = parseFloat(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
+// Bitta sahifani olib, shu bilan birga sahifadagi eng yuqori/eng past ball va
+// ro'yxat shu sahifada tugagan-tugamaganini ham qaytaradi (binary search uchun)
+async function fetchKengaytirilganPageInfo(s4subject, s5subject, edLangId, pageNumber) {
+  const cards = await fetchKengaytirilganPage(s4subject, s5subject, edLangId, pageNumber);
+  if (!cards.length) return { page: pageNumber, cards, empty: true, full: false, topScore: null, bottomScore: null };
+  return {
+    page: pageNumber,
+    cards,
+    empty: false,
+    full: cards.length === KQ_PAGE_SIZE,
+    topScore: parseKQScoreNumber(cards[0].scoreText),
+    bottomScore: parseKQScoreNumber(cards[cards.length - 1].scoreText),
+  };
+}
+
+// Ro'yxat (mandat.uzbmb.uz'da) ball bo'yicha KAMAYISH tartibida saqlanadi.
+// Shundan foydalanib, minglab sahifani bittalab tekshirish o'rniga, avval
+// abituriyentning ballini bilib olib (fetchMandatById orqali), keyin binary
+// search bilan to'g'ridan-to'g'ri o'sha ball joylashgan sahifaga "sakraymiz".
+// Bu, masalan, 115 000 kishilik ro'yxatda ham bir necha o'nlab so'rov bilan
+// (minglab so'rov o'rniga) natija topishga imkon beradi.
+async function findKQEntrantByScore(s4subject, s5subject, edLangId, entrantId, targetScore, onProgress) {
+  let requests = 0;
+  const fetchInfo = async (page) => {
+    requests++;
+    const info = await fetchKengaytirilganPageInfo(s4subject, s5subject, edLangId, page);
+    if (onProgress) onProgress({ page, requests });
+    return info;
+  };
+
+  // 1-sahifani darhol tekshiramiz (kam sonli ro'yxatlar uchun bevosita topilishi mumkin)
+  const firstInfo = await fetchInfo(1);
+  if (firstInfo.empty) return { found: null, requests };
+  let idx = firstInfo.cards.findIndex((c) => c.id === entrantId);
+  if (idx !== -1) return { found: { page: 1, index: idx, card: firstInfo.cards[idx], cards: firstInfo.cards, hasNext: firstInfo.full }, requests };
+
+  if (targetScore == null) return { found: null, requests, noScore: true };
+
+  // 2) Eksponensial qidiruv: bottomScore <= targetScore bo'lgan (yoki ro'yxat
+  // tugagan) sahifani topguncha 2, 4, 8, 16... sahifalarni tekshiramiz
+  let lo = 1;
+  let loInfo = firstInfo;
+  let hi = 1;
+  let hiInfo = firstInfo;
+
+  while (hiInfo.full && hiInfo.bottomScore !== null && hiInfo.bottomScore > targetScore) {
+    lo = hi;
+    loInfo = hiInfo;
+    hi = hi * 2;
+    if (hi > MAX_KQ_ID_SEARCH_PAGES) {
+      hi = MAX_KQ_ID_SEARCH_PAGES;
+      hiInfo = await fetchInfo(hi);
+      break;
+    }
+    hiInfo = await fetchInfo(hi);
+    idx = hiInfo.cards.findIndex((c) => c.id === entrantId);
+    if (idx !== -1) return { found: { page: hi, index: idx, card: hiInfo.cards[idx], cards: hiInfo.cards, hasNext: hiInfo.full }, requests };
+  }
+
+  // 3) Binary search: lo (bottomScore > target) va hi (bottomScore <= target
+  // yoki ro'yxat tugagan) orasida, target ball joylashgan sahifani topamiz
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    const midInfo = await fetchInfo(mid);
+    idx = midInfo.cards.findIndex((c) => c.id === entrantId);
+    if (idx !== -1) return { found: { page: mid, index: idx, card: midInfo.cards[idx], cards: midInfo.cards, hasNext: midInfo.full }, requests };
+
+    if (midInfo.empty || !midInfo.full || (midInfo.bottomScore !== null && midInfo.bottomScore <= targetScore)) {
+      hi = mid;
+      hiInfo = midInfo;
+    } else {
+      lo = mid;
+      loInfo = midInfo;
+    }
+  }
+
+  // 4) Aniq shu ID bilan mos ball joylashgan atrofni (bir xil ballilar bir
+  // nechta sahifaga tarqalgan bo'lishi mumkinligi uchun) chapga/o'ngga qarab
+  // tekshiramiz — lekin xavfsizlik uchun ko'p ketma-ket so'rov yubormaymiz
+  const TIE_SCAN_LIMIT = 40; // bir xil ball bilan ketma-ket eng ko'pi bilan shuncha sahifa tekshiriladi
+  let checked = 0;
+  let page = hi;
+  let currentInfo = hiInfo.page === hi ? hiInfo : await fetchInfo(hi);
+  while (currentInfo && !currentInfo.empty && checked < TIE_SCAN_LIMIT) {
+    idx = currentInfo.cards.findIndex((c) => c.id === entrantId);
+    if (idx !== -1) return { found: { page, index: idx, card: currentInfo.cards[idx], cards: currentInfo.cards, hasNext: currentInfo.full }, requests };
+
+    // Agar bu sahifadagi ballar targetdan sezilarli farq qilsa, qidirishni to'xtatamiz
+    if (currentInfo.topScore !== null && Math.abs(currentInfo.topScore - targetScore) > 0.001 &&
+        currentInfo.bottomScore !== null && Math.abs(currentInfo.bottomScore - targetScore) > 0.001 &&
+        !(currentInfo.topScore >= targetScore && currentInfo.bottomScore <= targetScore)) {
+      break;
+    }
+
+    if (!currentInfo.full) break; // ro'yxat tugadi
+    page++;
+    checked++;
+    currentInfo = await fetchInfo(page);
+  }
+
+  return { found: null, requests };
+}
+
+
 
 async function askForMandatId(chatId, userId) {
   awaitingMandatId.add(userId);
@@ -1260,15 +1376,12 @@ const kqResultsState = new Map();
 const pendingKQFilters = new Map();
 // Foydalanuvchi "ID orqali o'rnini topish"ni tanlab, ID kiritishini kutayotgan bo'lsak, shu Set ichida turadi
 const awaitingKQId = new Set();
-// ID bo'yicha qidirishda, cheksiz so'rov yubormaslik uchun tekshiriladigan
-// maksimal sahifalar soni (2000 sahifa = 20000 kishigacha). Qidiruv baribir
-// ro'yxat tugagan zahoti (bo'sh/qisqa sahifa kelganda) to'xtaydi — bu shunchaki
-// xavfsizlik cheklovi, pastroq ball bilan oxirgi qatorlarda turgan
-// abituriyentlar ham topilishi uchun yetarlicha katta qilib qo'yilgan.
-const MAX_KQ_ID_SEARCH_PAGES = 2000;
-// Har safar shuncha sahifa PARALLEL (bir vaqtda) so'raladi — ketma-ket
-// bittalab so'rashga qaraganda bir necha barobar tezroq ishlaydi
-const KQ_ID_SEARCH_BATCH_SIZE = 8;
+// Binary search bilan sahifalarni tekshirish LOG shaklda o'sadi (2, 4, 8, 16...),
+// shuning uchun bu chegarani ancha katta qilib qo'yish deyarli hech qanday
+// qo'shimcha so'rov sarflamaydi, lekin 100 000+ kishilik ro'yxatlarni ham
+// (masalan, matematika-fizika kabi ommaviy yo'nalishlarni) to'liq qamrab oladi
+// (20000 sahifa = ~200 000 kishigacha)
+const MAX_KQ_ID_SEARCH_PAGES = 20000;
 
 function kengaytirilganSubjectScreen() {
   const text =
@@ -1326,12 +1439,65 @@ function kengaytirilganModeScreen(subject, langLabel) {
   return { text, keyboard };
 }
 
+// Zaxira usul: agar abituriyentning ballini oldindan bilib bo'lmasa (masalan,
+// umumiy ma'lumot olinmadi), binary search ishlamaydi — shunda sahifalarni
+// PARALLEL paketlarda (bir nechtasini bir vaqtda) ketma-ket tekshiramiz.
+// Bu sekinroq, shuning uchun xavfsizlik uchun maxPages bilan chegaralangan.
+async function fetchKQEntrantLinearScan(s4subject, s5subject, edLangId, entrantId, maxPages, onProgress) {
+  const BATCH_SIZE = 8;
+  for (let batchStart = 1; batchStart <= maxPages; batchStart += BATCH_SIZE) {
+    const batchPages = [];
+    for (let p = batchStart; p < batchStart + BATCH_SIZE && p <= maxPages; p++) batchPages.push(p);
+
+    const batchResults = await Promise.all(
+      batchPages.map((p) => fetchKengaytirilganPage(s4subject, s5subject, edLangId, p))
+    );
+
+    for (let i = 0; i < batchResults.length; i++) {
+      const page = batchPages[i];
+      const cards = batchResults[i];
+      const idx = cards.findIndex((c) => c.id === entrantId);
+      if (idx !== -1) return { found: { page, index: idx, card: cards[idx], cards, hasNext: cards.length === KQ_PAGE_SIZE } };
+      if (cards.length < KQ_PAGE_SIZE) return { found: null, listEnded: true };
+    }
+
+    if (onProgress) onProgress({ page: batchPages[batchPages.length - 1] });
+  }
+  return { found: null, listEnded: false };
+}
+
+
 function formatKQCardLine(card, rank) {
   let line = `🏅 <b>${rank}-o'rin</b>\n👤 <b>${card.name}</b>\n🆔 ID: <b>${card.id}</b>\n`;
   if (card.scoreText) line += `🎯 Ball: <b>${card.scoreText}</b>\n`;
   if (card.thresholdText) line += `🚩 ${card.thresholdText}\n`;
   return line.trim();
 }
+
+// "ID orqali o'rnimni topish" natijasi — FAQAT shu foydalanuvchining o'z
+// kartasi ko'rsatiladi, ro'yxatdagi boshqa hech kim ko'rinmaydi
+function formatKQIdFoundResult(card, rank, filters, subjects) {
+  let text =
+    `✅ <b>#${card.id} topildi — ${rank}-o'rinda!</b>\n\n` +
+    `👤 <b>${card.name}</b>\n` +
+    `🔢 ID: <b>${card.id}</b>\n` +
+    `🏅 O'rni: <b>${rank}</b>\n` +
+    (card.scoreText ? `🎯 To'plangan ball: <b>${card.scoreText}</b>\n` : '') +
+    (card.thresholdText ? `🚩 ${card.thresholdText}\n` : '') +
+    `📚 Fanlar majmuasi: <b>${filters.subject}</b>\n` +
+    `🌐 Ta'lim tili: <b>${filters.langLabel}</b>\n`;
+
+  if (subjects) {
+    text += `\n📖 <b>Tafsilot:</b>\n`;
+    if (subjects.majburiy) text += `• Majburiy fanlar: ${subjects.majburiy}\n`;
+    if (subjects.fan1) text += `• 1-mutaxassislik fani: ${subjects.fan1}\n`;
+    if (subjects.fan2) text += `• 2-mutaxassislik fani: ${subjects.fan2}\n`;
+    if (subjects.umumiy) text += `• Umumiy ball: ${subjects.umumiy}\n`;
+  }
+
+  return text.trim();
+}
+
 
 // Foydalanuvchining hozirgi "Kengaytirilgan qidiruv" sahifasini matn +
 // klaviatura ko'rinishida qaytaradi
@@ -1923,78 +2089,58 @@ bot.on('message', async (msg) => {
   try {
     const progressMsg = await bot.sendMessage(
       msg.chat.id,
-      `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda... (1-sahifa)`
+      `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda...`
     );
     progressMsgId = progressMsg.message_id;
   } catch (err) {
     console.error("Kengaytirilgan qidiruv ID 'qidirilmoqda' xabari xatosi:", err.message);
   }
 
-  let foundCard = null;
-  let foundPage = null;
-  let foundIndex = null;
-  let foundPageCards = null;
-  let searchErr = null;
-
-  let listEnded = false;
-  outer:
-  for (
-    let batchStart = 1;
-    batchStart <= MAX_KQ_ID_SEARCH_PAGES && !listEnded;
-    batchStart += KQ_ID_SEARCH_BATCH_SIZE
-  ) {
-    const batchPages = [];
-    for (
-      let p = batchStart;
-      p < batchStart + KQ_ID_SEARCH_BATCH_SIZE && p <= MAX_KQ_ID_SEARCH_PAGES;
-      p++
-    ) {
-      batchPages.push(p);
-    }
-
-    let batchResults;
+  const updateProgress = async (extra) => {
+    if (!progressMsgId) return;
     try {
-      batchResults = await Promise.all(
-        batchPages.map((p) =>
-          fetchKengaytirilganPage(filters.s4subject, filters.s5subject, filters.edLangId, p)
-        )
+      await bot.editMessageText(
+        `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda...${extra ? `\n${extra}` : ''}`,
+        { chat_id: msg.chat.id, message_id: progressMsgId }
       );
-    } catch (err) {
-      searchErr = err;
-      console.error('Kengaytirilgan qidiruv ID qidiruv xatosi:', err.message);
-      break;
+    } catch (err) {}
+  };
+
+  // Avval umumiy natija so'rovi orqali abituriyentning ballini bilib olamiz —
+  // shu ball asosida to'g'ridan-to'g'ri kerakli sahifaga "sakrab" (binary
+  // search) topamiz, minglab sahifani birma-bir tekshirib chiqmaymiz
+  let targetScore = null;
+  try {
+    const generalResult = await fetchMandatById(entrantId);
+    if (generalResult && generalResult.scoreText) {
+      targetScore = parseKQScoreNumber(generalResult.scoreText);
     }
+  } catch (err) {
+    console.error('Kengaytirilgan qidiruv uchun umumiy ball olishda xatolik:', err.message);
+  }
 
-    for (let i = 0; i < batchResults.length; i++) {
-      const page = batchPages[i];
-      const cards = batchResults[i];
+  let searchErr = null;
+  let searchResult = null;
+  let lastProgressUpdate = 0;
 
-      const idx = cards.findIndex((c) => c.id === entrantId);
-      if (idx !== -1) {
-        foundCard = cards[idx];
-        foundPage = page;
-        foundIndex = idx;
-        foundPageCards = cards;
-        break outer;
+  try {
+    searchResult = await findKQEntrantByScore(
+      filters.s4subject,
+      filters.s5subject,
+      filters.edLangId,
+      entrantId,
+      targetScore,
+      ({ requests }) => {
+        // Har 5 so'rovda bir marta progress xabarini yangilaymiz (Telegram limitiga tushmaslik uchun)
+        if (requests - lastProgressUpdate >= 5) {
+          lastProgressUpdate = requests;
+          updateProgress(`(${requests} ta so'rov tekshirildi)`);
+        }
       }
-
-      if (cards.length < KQ_PAGE_SIZE) {
-        listEnded = true; // ro'yxat shu yerda tugadi
-        break;
-      }
-    }
-
-    // Progressni har paketdan keyin yangilaymiz (Telegram limitiga tushib qolmaslik uchun kamdan-kam)
-    if (progressMsgId) {
-      const lastChecked = batchPages[batchPages.length - 1] * KQ_PAGE_SIZE;
-      try {
-        await bot.editMessageText(
-          `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda... ` +
-            `(${batchPages[batchPages.length - 1]}-sahifa, ~${lastChecked} kishi tekshirildi)`,
-          { chat_id: msg.chat.id, message_id: progressMsgId }
-        );
-      } catch (err) {}
-    }
+    );
+  } catch (err) {
+    searchErr = err;
+    console.error('Kengaytirilgan qidiruv ID qidiruv xatosi:', err.message);
   }
 
   pendingKQFilters.delete(userId);
@@ -2015,7 +2161,47 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  if (!foundCard) {
+  // Agar ball oldindan aniqlanmagan bo'lsa (tezkor binary search ishlamaydi),
+  // zaxira sifatida chegaralangan (xavfsizlik uchun) parallel-paketli qidiruvga o'tamiz
+  if (searchResult && searchResult.noScore && !searchResult.found) {
+    const FALLBACK_MAX_PAGES = 3000; // ~30 000 kishigacha
+    try {
+      searchResult = await fetchKQEntrantLinearScan(
+        filters.s4subject,
+        filters.s5subject,
+        filters.edLangId,
+        entrantId,
+        FALLBACK_MAX_PAGES,
+        ({ page }) => {
+          if (page - lastProgressUpdate >= 80) {
+            lastProgressUpdate = page;
+            updateProgress(`(~${page * KQ_PAGE_SIZE} kishi tekshirildi)`);
+          }
+        }
+      );
+    } catch (err) {
+      searchErr = err;
+      console.error('Kengaytirilgan qidiruv zaxira qidiruv xatosi:', err.message);
+    }
+  }
+
+  if (searchErr) {
+    const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+    if (progressMsgId) {
+      try {
+        await bot.editMessageText(errText, {
+          chat_id: msg.chat.id,
+          message_id: progressMsgId,
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {}
+    } else {
+      await safeSend(msg.chat.id, errText, [backRow]);
+    }
+    return;
+  }
+
+  if (!searchResult || !searchResult.found) {
     const notFoundText =
       `❌ <b>#${entrantId}</b> ID "<b>${filters.subject}</b>" (${filters.langLabel}) ro'yxatidan topilmadi.\n\n` +
       `<i>ID raqamini yoki fanlar majmuasi/tilni tekshirib qayta urinib ko'ring.</i>`;
@@ -2034,35 +2220,34 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  const { page: foundPage, index: foundIndex, card: foundCard } = searchResult.found;
   const rank = (foundPage - 1) * KQ_PAGE_SIZE + foundIndex + 1;
 
-  kqResultsState.set(userId, {
-    subject: filters.subject,
-    s4subject: filters.s4subject,
-    s5subject: filters.s5subject,
-    edLangId: filters.edLangId,
-    langLabel: filters.langLabel,
-    page: foundPage,
-    cards: foundPageCards,
-    hasNext: foundPageCards.length === KQ_PAGE_SIZE,
-  });
+  // Fanlar majmuasi bo'yicha qo'shimcha tafsilot (agar hashId mavjud bo'lsa)
+  let subjectsDetail = null;
+  try {
+    subjectsDetail = await fetchEntrantSubjectDetails(foundCard.hashId);
+  } catch (err) {
+    console.error('Kengaytirilgan qidiruv tafsilot olishda xatolik:', err.message);
+  }
 
-  const rendered = renderKQPage(userId);
-  rendered.text = `✅ <b>#${entrantId} topildi — ${rank}-o'rinda!</b>\n\n${rendered.text}`;
+  // Diqqat: bu yerda FAQAT topilgan foydalanuvchining o'z kartasi ko'rsatiladi,
+  // sahifadagi boshqa abituriyentlar (ro'yxat) ko'rsatilmaydi
+  const resultText = formatKQIdFoundResult(foundCard, rank, filters, subjectsDetail);
 
   if (progressMsgId) {
     try {
-      await bot.editMessageText(rendered.text, {
+      await bot.editMessageText(resultText, {
         chat_id: msg.chat.id,
         message_id: progressMsgId,
         parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: rendered.keyboard },
+        reply_markup: { inline_keyboard: [backRow] },
       });
     } catch (err) {
       console.error('Kengaytirilgan qidiruv ID natijasini tahrirlashda xatolik:', err.message);
     }
   } else {
-    await safeSend(msg.chat.id, rendered.text, rendered.keyboard);
+    await safeSend(msg.chat.id, resultText, [backRow]);
   }
 });
 
