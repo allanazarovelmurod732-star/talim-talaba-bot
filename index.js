@@ -1592,12 +1592,16 @@ function formatKQCardLine(card, rank) {
 
 // "ID orqali o'rnimni topish" natijasi — FAQAT shu foydalanuvchining o'z
 // kartasi ko'rsatiladi, ro'yxatdagi boshqa hech kim ko'rinmaydi
-function formatKQIdFoundResult(card, rank, filters, subjects) {
+function formatKQIdFoundResult(card, rank, filters, subjects, totalInfo) {
+  const totalLine = totalInfo
+    ? ` (jami ${totalInfo.approx ? '~' : ''}${totalInfo.count} ta abituriyent ichida)`
+    : '';
+
   let text =
     `✅ <b>#${card.id} topildi — ${rank}-o'rinda!</b>\n\n` +
     `👤 <b>${card.name}</b>\n` +
     `🔢 ID: <b>${card.id}</b>\n` +
-    `🏅 O'rni: <b>${rank}</b>\n` +
+    `🏅 O'rni: <b>${rank}</b>${totalLine}\n` +
     (card.scoreText ? `🎯 To'plangan ball: <b>${card.scoreText}</b>\n` : '') +
     (card.thresholdText ? `🚩 ${card.thresholdText}\n` : '') +
     `📚 Fanlar majmuasi: <b>${filters.subject}</b>\n` +
@@ -2350,9 +2354,18 @@ bot.on('message', async (msg) => {
     console.error('Kengaytirilgan qidiruv tafsilot olishda xatolik:', err.message);
   }
 
+  // Shu fanlar majmuasi + til bo'yicha jami nechta abituriyent yakuniy
+  // mandatga kirganini ham aniqlaymiz (topilmasa ham natija ko'rsatiladi)
+  let totalInfo = null;
+  try {
+    totalInfo = await getKQTotalCount(filters.s4subject, filters.s5subject, filters.edLangId);
+  } catch (err) {
+    console.error("Kengaytirilgan qidiruv jami son hisoblashda xatolik:", err.message);
+  }
+
   // Diqqat: bu yerda FAQAT topilgan foydalanuvchining o'z kartasi ko'rsatiladi,
   // sahifadagi boshqa abituriyentlar (ro'yxat) ko'rsatilmaydi
-  const resultText = formatKQIdFoundResult(foundCard, rank, filters, subjectsDetail);
+  const resultText = formatKQIdFoundResult(foundCard, rank, filters, subjectsDetail, totalInfo);
 
   if (progressMsgId) {
     try {
