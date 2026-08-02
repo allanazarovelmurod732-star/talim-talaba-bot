@@ -78,6 +78,128 @@ function loadYonalishDb() {
 loadYonalishDb();
 
 // ---------------------------------------------------------------------------
+// "Natijamni tekshirish (ID)" — foydalanuvchi yuborgan BITTA abituriyent ID'i
+// uchun, jonli ravishda (hech qanday oldindan yig'ilgan baza ISHLATMASDAN)
+// mandat.uzbmb.uz saytiga so'rov yuborib, shu bitta odamning natijasini
+// olib beradi. Hech qanday boshqa foydalanuvchi ma'lumoti saqlanmaydi yoki
+// ommaviy yig'ilmaydi — bu xuddi saytning o'zida "ID bo'yicha qidiruv"
+// qilishning aynan o'zi, faqat Telegram orqali.
+// ---------------------------------------------------------------------------
+const MANDAT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
+function decodeUzApostrophe(s) {
+  return String(s).replace(/&#x2018;|&#8216;|&rsquo;/g, "'").trim();
+}
+
+async function fetchMandatById(entrantId) {
+  const searchUrl = `https://mandat.uzbmb.uz/Bakalavr/MainSearch?entrantid=${encodeURIComponent(entrantId)}&lang=uz`;
+  const res = await fetch(searchUrl, { headers: { 'User-Agent': MANDAT_UA } });
+  if (!res.ok) throw new Error(`mandat.uzbmb.uz MainSearch ${res.status}`);
+  const html = await res.text();
+
+  const idMarker = `# ${entrantId}`;
+  const idIdx = html.indexOf(idMarker);
+  if (idIdx === -1) return null; // shu ID bo'yicha natija topilmadi
+
+  // Kartaning boshlanish nuqtasini orqaga qarab qidiramiz
+  const cardStart = html.lastIndexOf('m3-rescard m3-rescard--', idIdx);
+  const win = html.slice(cardStart === -1 ? 0 : cardStart, idIdx + 3000);
+
+  const nameMatch = win.match(/m3-rescard__name">(?:<i[^>]*><\/i>\s*)?([^<]+)</);
+  const scoreMatch = win.match(/m3-score-val[^"]*">([^<]+)</);
+  const thresholdMatch = win.match(/m3-pbar__thmark"\s+title="([^"]*)"/);
+  const hashMatch = win.match(/Details\?hashId=([a-f0-9]+)/);
+
+  const result = {
+    name: nameMatch ? decodeUzApostrophe(nameMatch[1]) : null,
+    scoreText: scoreMatch ? decodeUzApostrophe(scoreMatch[1]) : null,
+    thresholdText: thresholdMatch ? decodeUzApostrophe(thresholdMatch[1]) : null,
+    subjects: null,
+  };
+
+  const hashId = hashMatch ? hashMatch[1] : null;
+  if (hashId) {
+    try {
+      const detRes = await fetch(`https://mandat.uzbmb.uz/Bakalavr/Details?hashId=${hashId}`, {
+        headers: { 'User-Agent': MANDAT_UA },
+      });
+      if (detRes.ok) {
+        const detHtml = await detRes.text();
+        const til = (detHtml.match(/Ta'lim tili:\s*<b>([^<]+)</) || [])[1];
+        const majburiy = (detHtml.match(/Majburiy fanlar<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
+        const fan1 = (detHtml.match(/1-mutaxassislik fani<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
+        const fan2 = (detHtml.match(/2-mutaxassislik fani<\/div>\s*<div class="m3-det-subj__val">([^<]+)</) || [])[1];
+        const umumiy = (detHtml.match(/Umumiy ball:\s*<br\s*\/?>\s*<b>([^<]+)</) || [])[1];
+        result.subjects = {
+          til: til ? decodeUzApostrophe(til) : null,
+          majburiy: majburiy ? decodeUzApostrophe(majburiy) : null,
+          fan1: fan1 ? decodeUzApostrophe(fan1) : null,
+          fan2: fan2 ? decodeUzApostrophe(fan2) : null,
+          umumiy: umumiy ? decodeUzApostrophe(umumiy) : null,
+        };
+      }
+    } catch (err) {
+      console.error('Mandat Details olishda xatolik:', err.message);
+      // Tafsilot olinmasa ham, asosiy natija baribir ko'rsatiladi
+    }
+  }
+
+  return result;
+}
+
+function formatMandatIdResult(result, entrantId) {
+  if (!result || !result.name) {
+    return (
+      `❌ <b>${entrantId}</b> ID raqami bo'yicha natija topilmadi.\n\n` +
+      `<i>ID raqamini tekshirib qayta yuboring, yoki hali natija e'lon qilinmagan bo'lishi mumkin.</i>`
+    );
+  }
+
+  const { name, scoreText, thresholdText, subjects } = result;
+
+  let text =
+    `🆔 <b>Natija topildi</b>\n\n` +
+    `👤 <b>${name}</b>\n` +
+    `🔢 ID: <b>${entrantId}</b>\n` +
+    (scoreText ? `🎯 To'plangan ball: <b>${scoreText}</b>\n` : '') +
+    (thresholdText ? `🚩 ${thresholdText}\n` : '');
+
+  if (subjects) {
+    text += `\n📚 <b>Fanlar:</b>\n`;
+    if (subjects.majburiy) text += `• Majburiy fanlar: ${subjects.majburiy}\n`;
+    if (subjects.fan1) text += `• 1-mutaxassislik fani: ${subjects.fan1}\n`;
+    if (subjects.fan2) text += `• 2-mutaxassislik fani: ${subjects.fan2}\n`;
+    if (subjects.til) text += `• Ta'lim tili: ${subjects.til}\n`;
+  }
+
+  text +=
+    `\n<i>Eslatma: bu — faqat sizning shaxsiy test natijangiz, mandat.uzbmb.uz saytidan jonli olindi. ` +
+    `Aniq qaysi yo'nalish/OTM'ga va nechanchi o'rinda kirganingiz haqidagi rasmiy ma'lumot mandat ` +
+    `yakunlangach, saytning "Kengaytirilgan qidiruv" bo'limida e'lon qilinadi.</i>`;
+
+  return text;
+}
+
+// Foydalanuvchi hozir o'z abituriyent ID'ini kiritishini kutayotgan bo'lsak, shu Set ichida turadi
+const awaitingMandatId = new Set();
+
+async function askForMandatId(chatId, userId) {
+  awaitingMandatId.add(userId);
+  try {
+    await bot.sendMessage(
+      chatId,
+      `🆔 <b>Natijamni tekshirish</b>\n\n` +
+        `Abituriyent ID raqamingizni (7 xonali) yozing, masalan: <b>5506347</b>.\n\n` +
+        `Bot <b>mandat.uzbmb.uz</b> saytidan sizning shaxsiy natijangizni jonli tarzda olib ko'rsatadi ` +
+        `— boshqa hech kimning ma'lumoti ko'rsatilmaydi yoki saqlanmaydi.`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+    );
+  } catch (err) {
+    console.error("Mandat ID so'rash xabari xatosi:", err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // "Mening 5 ta tanlovim" — O'zbekistonda abituriyentlar hujjat topshirishda
 // 5 tagacha yo'nalish tanlashadi. Bu yerda foydalanuvchi "Mandat tanlash"
 // natijalaridan yoqqan yo'nalishlarni o'z ro'yxatiga (5 tagacha) qo'shib
@@ -775,6 +897,7 @@ function mainMenuScreen() {
     [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
     [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
     [btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })],
+    [btn({ text: "🆔 Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger' })],
     [btn({ text: 'Botni baholang', callback_data: 'menu_baho', icon: EMOJI.starIcon, style: 'success' })],
   ];
 
@@ -2004,6 +2127,19 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "Natijamni tekshirish (ID)" bo'limi — foydalanuvchining ID'ini kutish holatini
+  // yoqib qo'yishi kerak bo'lgani uchun umumiy SCREENS ro'yxatidan alohida ishlanadi
+  if (query.data === 'menu_mandat_id') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    await askForMandatId(chatId, userId);
+    return;
+  }
+
   // "Mening 5 ta tanlovim" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
   // umumiy SCREENS ro'yxatidan alohida ishlanadi)
   if (query.data === 'menu_tanlov') {
@@ -2178,6 +2314,7 @@ bot.on('callback_query', async (query) => {
   pendingYonalishQabulTuri.delete(userId);
   yonalishResultsState.delete(userId);
   pendingBahoSelection.delete(userId);
+  awaitingMandatId.delete(userId);
 
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
@@ -2192,6 +2329,78 @@ bot.on('callback_query', async (query) => {
     const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
     const outText = isGroup ? stripTgEmoji(text) : text;
     await safeSend(chatId, outText, outKeyboard);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// "Natijamni tekshirish (ID)" — foydalanuvchi o'z ID raqamini yozganda
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaitingMandatId.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const entrantId = msg.text.trim();
+  if (!/^\d{7}$/.test(entrantId)) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "❗️ Iltimos, 7 xonali abituriyent ID raqamini to'g'ri kiriting (masalan: 5506347)."
+      );
+    } catch (err) {
+      console.error('Mandat ID validatsiya xabari xatosi:', err.message);
+    }
+    return; // holat saqlanadi — qayta urinish mumkin
+  }
+
+  awaitingMandatId.delete(userId);
+
+  try {
+    await bot.sendChatAction(msg.chat.id, 'typing');
+  } catch (err) {
+    console.error('sendChatAction xatosi:', err.message);
+  }
+
+  let thinkingMsgId = null;
+  try {
+    const thinkingMsg = await bot.sendMessage(msg.chat.id, '🔎 mandat.uzbmb.uz saytidan qidirilmoqda...');
+    thinkingMsgId = thinkingMsg.message_id;
+  } catch (err) {
+    console.error("Mandat ID 'qidirilmoqda' xabari xatosi:", err.message);
+  }
+
+  let result = null;
+  try {
+    result = await fetchMandatById(entrantId);
+  } catch (err) {
+    console.error('Mandat ID qidiruv xatosi:', err.message);
+  }
+
+  const resultText = formatMandatIdResult(result, entrantId);
+  const sendOptions = { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } };
+
+  if (thinkingMsgId) {
+    try {
+      await bot.editMessageText(resultText, {
+        chat_id: msg.chat.id,
+        message_id: thinkingMsgId,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [backRow] },
+      });
+    } catch (err) {
+      console.error('Mandat ID natijasini tahrirlashda xatolik:', err.message);
+    }
+  } else {
+    try {
+      await bot.sendMessage(msg.chat.id, resultText, sendOptions);
+    } catch (err) {
+      console.error('Mandat ID natijasini yuborishda xatolik:', err.message);
+    }
   }
 });
 
