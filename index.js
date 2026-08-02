@@ -1316,6 +1316,7 @@ const MANDAT_SUBJECT_OPTIONS = [
   'Matematika + Geografiya',
   'Matematika + Ona tili va adabiyot',
   'Nemis tili + Ona tili va adabiyot',
+  'Ona tili va adabiyot + Chet tili',
   'Ona tili va adabiyot + Matematika',
   "Oʻzbek tili va adabiyot + Chet tili",
   "Qirg'iz tili va adabiyot + Tarix",
