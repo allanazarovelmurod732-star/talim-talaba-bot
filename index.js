@@ -1261,8 +1261,14 @@ const pendingKQFilters = new Map();
 // Foydalanuvchi "ID orqali o'rnini topish"ni tanlab, ID kiritishini kutayotgan bo'lsak, shu Set ichida turadi
 const awaitingKQId = new Set();
 // ID bo'yicha qidirishda, cheksiz so'rov yubormaslik uchun tekshiriladigan
-// maksimal sahifalar soni (300 sahifa = 3000 kishigacha)
-const MAX_KQ_ID_SEARCH_PAGES = 300;
+// maksimal sahifalar soni (2000 sahifa = 20000 kishigacha). Qidiruv baribir
+// ro'yxat tugagan zahoti (bo'sh/qisqa sahifa kelganda) to'xtaydi — bu shunchaki
+// xavfsizlik cheklovi, pastroq ball bilan oxirgi qatorlarda turgan
+// abituriyentlar ham topilishi uchun yetarlicha katta qilib qo'yilgan.
+const MAX_KQ_ID_SEARCH_PAGES = 2000;
+// Har safar shuncha sahifa PARALLEL (bir vaqtda) so'raladi — ketma-ket
+// bittalab so'rashga qaraganda bir necha barobar tezroq ishlaydi
+const KQ_ID_SEARCH_BATCH_SIZE = 8;
 
 function kengaytirilganSubjectScreen() {
   const text =
@@ -1930,33 +1936,61 @@ bot.on('message', async (msg) => {
   let foundPageCards = null;
   let searchErr = null;
 
-  for (let page = 1; page <= MAX_KQ_ID_SEARCH_PAGES; page++) {
-    let cards;
+  let listEnded = false;
+  outer:
+  for (
+    let batchStart = 1;
+    batchStart <= MAX_KQ_ID_SEARCH_PAGES && !listEnded;
+    batchStart += KQ_ID_SEARCH_BATCH_SIZE
+  ) {
+    const batchPages = [];
+    for (
+      let p = batchStart;
+      p < batchStart + KQ_ID_SEARCH_BATCH_SIZE && p <= MAX_KQ_ID_SEARCH_PAGES;
+      p++
+    ) {
+      batchPages.push(p);
+    }
+
+    let batchResults;
     try {
-      cards = await fetchKengaytirilganPage(filters.s4subject, filters.s5subject, filters.edLangId, page);
+      batchResults = await Promise.all(
+        batchPages.map((p) =>
+          fetchKengaytirilganPage(filters.s4subject, filters.s5subject, filters.edLangId, p)
+        )
+      );
     } catch (err) {
       searchErr = err;
       console.error('Kengaytirilgan qidiruv ID qidiruv xatosi:', err.message);
       break;
     }
 
-    const idx = cards.findIndex((c) => c.id === entrantId);
-    if (idx !== -1) {
-      foundCard = cards[idx];
-      foundPage = page;
-      foundIndex = idx;
-      foundPageCards = cards;
-      break;
+    for (let i = 0; i < batchResults.length; i++) {
+      const page = batchPages[i];
+      const cards = batchResults[i];
+
+      const idx = cards.findIndex((c) => c.id === entrantId);
+      if (idx !== -1) {
+        foundCard = cards[idx];
+        foundPage = page;
+        foundIndex = idx;
+        foundPageCards = cards;
+        break outer;
+      }
+
+      if (cards.length < KQ_PAGE_SIZE) {
+        listEnded = true; // ro'yxat shu yerda tugadi
+        break;
+      }
     }
 
-    if (cards.length < KQ_PAGE_SIZE) break; // ro'yxat shu yerda tugadi
-
-    // Progressni har 10 sahifada bir yangilaymiz (Telegram limitiga tushib qolmaslik uchun)
-    if (progressMsgId && page % 10 === 0) {
+    // Progressni har paketdan keyin yangilaymiz (Telegram limitiga tushib qolmaslik uchun kamdan-kam)
+    if (progressMsgId) {
+      const lastChecked = batchPages[batchPages.length - 1] * KQ_PAGE_SIZE;
       try {
         await bot.editMessageText(
           `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda... ` +
-            `(${page}-sahifa, ${page * KQ_PAGE_SIZE} kishi tekshirildi)`,
+            `(${batchPages[batchPages.length - 1]}-sahifa, ~${lastChecked} kishi tekshirildi)`,
           { chat_id: msg.chat.id, message_id: progressMsgId }
         );
       } catch (err) {}
