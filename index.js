@@ -155,7 +155,7 @@ async function fetchMandatById(entrantId) {
 // Foydalanuvchi hozir o'z abituriyent ID'ini kiritishini kutayotgan bo'lsak, shu Set ichida turadi
 const awaitingMandatId = new Set();
 
-function formatMandatIdResult(result, entrantId) {
+function formatMandatIdResult(result, entrantId, rankInfo) {
   if (!result || !result.name) {
     return (
       `❌ <b>${entrantId}</b> ID raqami bo'yicha natija topilmadi.\n\n` +
@@ -166,24 +166,25 @@ function formatMandatIdResult(result, entrantId) {
   const { name, scoreText, thresholdText, subjects } = result;
 
   let text =
-    `🆔 <b>Natija topildi</b>\n\n` +
-    `👤 <b>${name}</b>\n` +
-    `🔢 ID: <b>${entrantId}</b>\n` +
-    (scoreText ? `🎯 To'plangan ball: <b>${scoreText}</b>\n` : '') +
+    `✅ <b>${name}</b>\n` +
+    `🆔 ID: <b>${entrantId}</b>\n` +
+    (scoreText ? `🎯 Ball: <b>${scoreText}</b>\n` : '') +
     (thresholdText ? `🚩 ${thresholdText}\n` : '');
 
-  if (subjects) {
-    text += `\n📚 <b>Fanlar:</b>\n`;
-    if (subjects.majburiy) text += `• Majburiy fanlar: ${subjects.majburiy}\n`;
-    if (subjects.fan1) text += `• 1-mutaxassislik fani: ${subjects.fan1}\n`;
-    if (subjects.fan2) text += `• 2-mutaxassislik fani: ${subjects.fan2}\n`;
-    if (subjects.til) text += `• Ta'lim tili: ${subjects.til}\n`;
+  if (rankInfo) {
+    const totalStr = `${rankInfo.approxTotal ? '~' : ''}${rankInfo.total}`;
+    text += `🏆 Reytingda: <b>${rankInfo.rank}-o'rin</b> (jami ${totalStr} ta abituriyent ichida)\n`;
   }
 
-  text +=
-    `\n<i>Eslatma: bu — faqat sizning shaxsiy test natijangiz, mandat.uzbmb.uz saytidan jonli olindi. ` +
-    `Aniq qaysi yo'nalish/OTM'ga va nechanchi o'rinda kirganingiz haqidagi rasmiy ma'lumot mandat ` +
-    `yakunlangach, saytning "Kengaytirilgan qidiruv" bo'limida e'lon qilinadi.</i>`;
+  if (subjects) {
+    const combo = [subjects.fan1, subjects.fan2].filter(Boolean).join(' + ');
+    const comboLine = combo || subjects.majburiy;
+    if (comboLine) {
+      text += `📚 Topilgan yo'nalish: <b>${comboLine}${subjects.til ? ` + ${subjects.til}` : ''}</b>\n`;
+    }
+  }
+
+  text += `\n@talimtalababot — orqali o'z o'rningizni aniqlang`;
 
   return text;
 }
@@ -377,6 +378,101 @@ async function findKQEntrantByScore(s4subject, s5subject, edLangId, entrantId, t
 }
 
 
+
+// Details sahifasidan olingan "Ta'lim tili" matnini (masalan "O'zbek tili",
+// "Rus tili" ...) Kengaytirilgan qidiruvda ishlatiladigan edLangId'ga mos keltiradi
+function tilToEdLangId(til) {
+  if (!til) return null;
+  const t = til.toLowerCase();
+  if (t.includes('рус') || t.includes('rus')) return 2;
+  if (t.includes('qoraqalpoq')) return 3;
+  if (t.includes('tojik') || t.includes('тож')) return 4;
+  if (t.includes('qozoq') || t.includes('қаз')) return 5;
+  if (t.includes('zbek')) return 1;
+  return null;
+}
+
+// Berilgan fanlar majmuasi + til bo'yicha YAKUNIY MANDATGA kirganlarning
+// umumiy sonini aniqlaydi (findKQEntrantByScore'dagi kabi eksponensial +
+// binary search — sahifalarni birma-bir sanamasdan)
+async function getKQTotalCount(s4subject, s5subject, edLangId, onProgress) {
+  let requests = 0;
+  const fetchInfo = async (page) => {
+    requests++;
+    const info = await fetchKengaytirilganPageInfo(s4subject, s5subject, edLangId, page);
+    if (onProgress) onProgress({ page, requests });
+    return info;
+  };
+
+  const firstInfo = await fetchInfo(1);
+  if (firstInfo.empty) return { count: 0, approx: false };
+  if (!firstInfo.full) return { count: firstInfo.cards.length, approx: false };
+
+  let lo = 1;
+  let hi = 2;
+  let hiInfo = await fetchInfo(hi);
+  let capped = false;
+  while (hiInfo.full) {
+    lo = hi;
+    hi *= 2;
+    if (hi > MAX_KQ_ID_SEARCH_PAGES) {
+      hi = MAX_KQ_ID_SEARCH_PAGES;
+      hiInfo = await fetchInfo(hi);
+      capped = hiInfo.full;
+      break;
+    }
+    hiInfo = await fetchInfo(hi);
+  }
+
+  if (!capped) {
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      const midInfo = await fetchInfo(mid);
+      if (midInfo.full) {
+        lo = mid;
+      } else {
+        hi = mid;
+        hiInfo = midInfo;
+      }
+    }
+  }
+
+  return { count: (hi - 1) * KQ_PAGE_SIZE + hiInfo.cards.length, approx: capped };
+}
+
+// ID orqali topilgan abituriyentning shu fanlar majmuasi + til bo'yicha
+// nechanchi o'rinda ekanini va ro'yxat jamisini aniqlashga urinadi
+// (majburiy ma'lumot yetarli bo'lmasa yoki xatolik bo'lsa, jimgina null qaytaradi)
+async function computeMandatIdRanking(result, entrantId) {
+  if (!result || !result.subjects) return null;
+  const { fan1, fan2, til } = result.subjects;
+  if (!fan1 || !fan2 || !til) return null;
+
+  const edLangId = tilToEdLangId(til);
+  if (!edLangId) return null;
+
+  const targetScore = parseKQScoreNumber(result.scoreText);
+
+  try {
+    const [searchResult, totalInfo] = await Promise.all([
+      findKQEntrantByScore(fan1, fan2, edLangId, entrantId, targetScore),
+      getKQTotalCount(fan1, fan2, edLangId),
+    ]);
+
+    if (!searchResult || !searchResult.found || !totalInfo) return null;
+
+    const rank = (searchResult.found.page - 1) * KQ_PAGE_SIZE + searchResult.found.index + 1;
+    return {
+      rank,
+      total: totalInfo.count,
+      approxTotal: totalInfo.approx,
+      subjectCombo: `${fan1} + ${fan2}`,
+    };
+  } catch (err) {
+    console.error('Mandat ID reyting hisoblashda xatolik:', err.message);
+    return null;
+  }
+}
 
 async function askForMandatId(chatId, userId) {
   awaitingMandatId.add(userId);
@@ -3252,7 +3348,20 @@ bot.on('message', async (msg) => {
     console.error('Mandat ID qidiruv xatosi:', err.message);
   }
 
-  const resultText = formatMandatIdResult(result, entrantId);
+  let rankInfo = null;
+  if (result && result.name) {
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText('📊 Reytingdagi o\'rningiz hisoblanmoqda...', {
+          chat_id: msg.chat.id,
+          message_id: thinkingMsgId,
+        });
+      } catch (err) {}
+    }
+    rankInfo = await computeMandatIdRanking(result, entrantId);
+  }
+
+  const resultText = formatMandatIdResult(result, entrantId, rankInfo);
   const sendOptions = { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } };
 
   if (thinkingMsgId) {
