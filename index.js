@@ -307,6 +307,8 @@ async function findKQEntrantByScore(s4subject, s5subject, edLangId, entrantId, t
     if (hi > MAX_KQ_ID_SEARCH_PAGES) {
       hi = MAX_KQ_ID_SEARCH_PAGES;
       hiInfo = await fetchInfo(hi);
+      idx = hiInfo.cards.findIndex((c) => c.id === entrantId);
+      if (idx !== -1) return { found: { page: hi, index: idx, card: hiInfo.cards[idx], cards: hiInfo.cards, hasNext: hiInfo.full }, requests };
       break;
     }
     hiInfo = await fetchInfo(hi);
@@ -331,28 +333,44 @@ async function findKQEntrantByScore(s4subject, s5subject, edLangId, entrantId, t
     }
   }
 
-  // 4) Aniq shu ID bilan mos ball joylashgan atrofni (bir xil ballilar bir
-  // nechta sahifaga tarqalgan bo'lishi mumkinligi uchun) chapga/o'ngga qarab
-  // tekshiramiz — lekin xavfsizlik uchun ko'p ketma-ket so'rov yubormaymiz
-  const TIE_SCAN_LIMIT = 40; // bir xil ball bilan ketma-ket eng ko'pi bilan shuncha sahifa tekshiriladi
-  let checked = 0;
-  let page = hi;
-  let currentInfo = hiInfo.page === hi ? hiInfo : await fetchInfo(hi);
-  while (currentInfo && !currentInfo.empty && checked < TIE_SCAN_LIMIT) {
-    idx = currentInfo.cards.findIndex((c) => c.id === entrantId);
-    if (idx !== -1) return { found: { page, index: idx, card: currentInfo.cards[idx], cards: currentInfo.cards, hasNext: currentInfo.full }, requests };
+  // 4) Binary search bergan taxminiy nuqta atrofida, ballar aniq mos
+  // kelmasligi mumkinligini hisobga olib (masalan, umumiy tekshiruvdagi ball
+  // bilan shu ro'yxatdagi ball formatida ozgina farq bo'lishi mumkin), FAQAT
+  // ID bo'yicha (ball farqiga qaramay) kengroq oynada — ikkala tomonga
+  // parallel paketlarda — qidiramiz.
+  const WINDOW_PAGES = 400; // har tomonga eng ko'pi bilan shuncha sahifa (jami ~8000 kishi)
+  const BATCH = 8;
 
-    // Agar bu sahifadagi ballar targetdan sezilarli farq qilsa, qidirishni to'xtatamiz
-    if (currentInfo.topScore !== null && Math.abs(currentInfo.topScore - targetScore) > 0.001 &&
-        currentInfo.bottomScore !== null && Math.abs(currentInfo.bottomScore - targetScore) > 0.001 &&
-        !(currentInfo.topScore >= targetScore && currentInfo.bottomScore <= targetScore)) {
-      break;
+  // Orqaga (past raqamli sahifalarga, ya'ni balli balandroq tomonga) qidirish
+  for (let start = lo; start > Math.max(1, lo - WINDOW_PAGES); start -= BATCH) {
+    const pages = [];
+    for (let p = start; p > start - BATCH && p >= Math.max(1, lo - WINDOW_PAGES); p--) pages.push(p);
+    if (!pages.length) break;
+    const results = await Promise.all(pages.map((p) => fetchInfo(p)));
+    for (let i = 0; i < results.length; i++) {
+      const idx2 = results[i].cards.findIndex((c) => c.id === entrantId);
+      if (idx2 !== -1) {
+        return { found: { page: pages[i], index: idx2, card: results[i].cards[idx2], cards: results[i].cards, hasNext: results[i].full }, requests };
+      }
     }
+  }
 
-    if (!currentInfo.full) break; // ro'yxat tugadi
-    page++;
-    checked++;
-    currentInfo = await fetchInfo(page);
+  // Oldinga (katta raqamli sahifalarga, ya'ni balli pastroq tomonga) qidirish
+  let page = hi;
+  outerForward:
+  for (let start = hi; start < hi + WINDOW_PAGES; start += BATCH) {
+    const pages = [];
+    for (let p = start; p < start + BATCH && p < hi + WINDOW_PAGES; p++) pages.push(p);
+    if (!pages.length) break;
+    const results = await Promise.all(pages.map((p) => fetchInfo(p)));
+    for (let i = 0; i < results.length; i++) {
+      const info = results[i];
+      const idx2 = info.cards.findIndex((c) => c.id === entrantId);
+      if (idx2 !== -1) {
+        return { found: { page: pages[i], index: idx2, card: info.cards[idx2], cards: info.cards, hasNext: info.full }, requests };
+      }
+      if (info.empty || !info.full) break outerForward; // ro'yxat tugadi
+    }
   }
 
   return { found: null, requests };
@@ -1446,7 +1464,7 @@ function kengaytirilganModeScreen(subject, langLabel) {
 // PARALLEL paketlarda (bir nechtasini bir vaqtda) ketma-ket tekshiramiz.
 // Bu sekinroq, shuning uchun xavfsizlik uchun maxPages bilan chegaralangan.
 async function fetchKQEntrantLinearScan(s4subject, s5subject, edLangId, entrantId, maxPages, onProgress) {
-  const BATCH_SIZE = 8;
+  const BATCH_SIZE = 15;
   for (let batchStart = 1; batchStart <= maxPages; batchStart += BATCH_SIZE) {
     const batchPages = [];
     for (let p = batchStart; p < batchStart + BATCH_SIZE && p <= maxPages; p++) batchPages.push(p);
@@ -2163,12 +2181,13 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Agar ball oldindan aniqlanmagan bo'lsa (tezkor binary search ishlamaydi),
-  // zaxira sifatida chegaralangan (xavfsizlik uchun) parallel-paketli qidiruvga o'tamiz
-  if (searchResult && searchResult.noScore && !searchResult.found) {
-    const FALLBACK_MAX_PAGES = 3000; // ~30 000 kishigacha
+  // Agar tezkor (ball asosidagi) qidiruv topa olmasa — ballar farq qilishi
+  // yoki ball umuman aniqlanmagan bo'lishi mumkin — oxirgi chora sifatida
+  // chegaralangan to'liq (sekinroq) parallel-paketli qidiruvga o'tamiz
+  if (searchResult && !searchResult.found) {
+    const FALLBACK_MAX_PAGES = 15000; // ~150 000 kishigacha (mat-fizika kabi ommaviy majmualar uchun ham yetarli)
     try {
-      searchResult = await fetchKQEntrantLinearScan(
+      const fallbackResult = await fetchKQEntrantLinearScan(
         filters.s4subject,
         filters.s5subject,
         filters.edLangId,
@@ -2181,6 +2200,7 @@ bot.on('message', async (msg) => {
           }
         }
       );
+      searchResult = fallbackResult;
     } catch (err) {
       searchErr = err;
       console.error('Kengaytirilgan qidiruv zaxira qidiruv xatosi:', err.message);
@@ -2206,7 +2226,8 @@ bot.on('message', async (msg) => {
   if (!searchResult || !searchResult.found) {
     const notFoundText =
       `❌ <b>#${entrantId}</b> ID "<b>${filters.subject}</b>" (${filters.langLabel}) ro'yxatidan topilmadi.\n\n` +
-      `<i>ID raqamini yoki fanlar majmuasi/tilni tekshirib qayta urinib ko'ring.</i>`;
+      `<i>Bu ID boshqa fanlar majmuasi yoki ta'lim tili bo'yicha yakuniy mandatga kirgan bo'lishi mumkin — ` +
+      `shu majmua/tilni tekshirib qayta urinib ko'ring, yoki ID raqamini qayta tekshiring.</i>`;
     if (progressMsgId) {
       try {
         await bot.editMessageText(notFoundText, {
