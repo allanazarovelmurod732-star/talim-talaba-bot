@@ -1713,6 +1713,7 @@ function ball189SubjectScreen() {
     btn({ text: subject, callback_data: `b189_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
   keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'b189_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
+  keyboard.push([btn({ text: 'Orqaga', callback_data: 'menu_back', style: 'success', icon: EMOJI.backIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -1727,7 +1728,7 @@ function ball189LangScreen(subject) {
     [btn({ text: 'Qoraqalpoq', callback_data: 'b189_lang_3', style: 'primary', icon: '5364282834078939253' })],
     [btn({ text: 'Tadjik', callback_data: 'b189_lang_4', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Qozoq', callback_data: 'b189_lang_5', style: 'primary', icon: '5244446228543983332' })],
-    [btn({ text: 'Orqaga', callback_data: 'menu_189', style: 'primary', icon: EMOJI.backIcon })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_189', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -1771,6 +1772,7 @@ function statistikaSubjectScreen() {
     btn({ text: subject, callback_data: `stat_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
   keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'stat_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
+  keyboard.push([btn({ text: 'Orqaga', callback_data: 'menu_back', style: 'success', icon: EMOJI.backIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -1785,7 +1787,7 @@ function statistikaLangScreen(subject) {
     [btn({ text: 'Qoraqalpoq', callback_data: 'stat_lang_3', style: 'primary', icon: '5364282834078939253' })],
     [btn({ text: 'Tadjik', callback_data: 'stat_lang_4', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Qozoq', callback_data: 'stat_lang_5', style: 'primary', icon: '5244446228543983332' })],
-    [btn({ text: 'Orqaga', callback_data: 'menu_statistika', style: 'primary', icon: EMOJI.backIcon })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_statistika', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -1829,6 +1831,7 @@ function kengaytirilganSubjectScreen() {
     btn({ text: subject, callback_data: `kq_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
   keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'kq_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
+  keyboard.push([btn({ text: 'Orqaga', callback_data: 'menu_back', style: 'success', icon: EMOJI.backIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -1843,7 +1846,7 @@ function kengaytirilganLangScreen(subject) {
     [btn({ text: 'Qoraqalpoq', callback_data: 'kq_lang_3', style: 'primary', icon: '5364282834078939253' })],
     [btn({ text: 'Tadjik', callback_data: 'kq_lang_4', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Qozoq', callback_data: 'kq_lang_5', style: 'primary', icon: '5244446228543983332' })],
-    [btn({ text: 'Orqaga', callback_data: 'menu_kengaytirilgan', style: 'primary', icon: EMOJI.backIcon })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_kengaytirilgan', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -1994,6 +1997,7 @@ function yonalishSubjectScreen() {
     btn({ text: subject, callback_data: `yon_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
   keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'yon_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
+  keyboard.push([btn({ text: 'Orqaga', callback_data: 'menu_back', style: 'success', icon: EMOJI.backIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -2013,7 +2017,7 @@ function yonalishTilScreen(subject) {
     [btn({ text: "Qirg'iz", callback_data: 'yon_til_kg', style: 'primary', icon: '6323615997852910673' })],
     [btn({ text: 'Tojik', callback_data: 'yon_til_tj', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Turkman', callback_data: 'yon_til_tk', style: 'primary', icon: '5431468139906901536' })],
-    [btn({ text: 'Orqaga', callback_data: 'menu_yonalish', style: 'primary', icon: EMOJI.backIcon })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -2033,7 +2037,7 @@ function yonalishShaklScreen() {
   const keyboard = [
     [btn({ text: 'Kunduzgi', callback_data: 'yon_shakl_kunduzgi', style: 'primary' })],
     [btn({ text: 'Masofaviy', callback_data: 'yon_shakl_masofaviy', style: 'success' })],
-    [btn({ text: 'Orqaga', callback_data: 'yon_back_til', style: 'primary', icon: EMOJI.backIcon })],
+    [btn({ text: 'Orqaga', callback_data: 'yon_back_til', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -2056,7 +2060,7 @@ function yonalishQabulTuriScreen() {
     [btn({ text: 'Faqat Grant', callback_data: 'yon_qabul_grant', style: 'success', icon: '5274156304036800055' })],
     [btn({ text: 'Faqat Kontrakt', callback_data: 'yon_qabul_kontrakt', style: 'primary', icon: '5274156304036800055' })],
     [btn({ text: '🟢🔵 Grant + Kontrakt', callback_data: 'yon_qabul_both', style: 'danger' })],
-    [btn({ text: 'Orqaga', callback_data: 'yon_back_shakl', style: 'primary', icon: EMOJI.backIcon })],
+    [btn({ text: 'Orqaga', callback_data: 'yon_back_shakl', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -2917,7 +2921,7 @@ bot.on('message', async (msg) => {
     } else {
       await bot.sendMessage(targetChatId, '💬 Jamoamizdan sizga javob keldi, lekin bu turdagi xabarni yuborib bo\'lmadi.');
     }
-    await bot.sendMessage(msg.chat.id, '<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Javobingiz foydalanuvchiga yetkazildi.');
+    await bot.sendMessage(msg.chat.id, '<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Javobingiz foydalanuvchiga yetkazildi.', { parse_mode: 'HTML' });
   } catch (err) {
     console.error('Admin javobini foydalanuvchiga yetkazishda xatolik:', err.message);
     try {
@@ -3027,7 +3031,7 @@ bot.on('callback_query', async (query) => {
       console.error('broadcast_cancel answerCallbackQuery xatosi:', err.message);
     }
     try {
-      await bot.editMessageText("<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Xabar yuborish bekor qilindi.", { chat_id: chatId, message_id: messageId });
+      await bot.editMessageText("<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Xabar yuborish bekor qilindi.", { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
     } catch (err) {}
     return;
   }
@@ -3050,7 +3054,7 @@ bot.on('callback_query', async (query) => {
       console.error('broadcast_confirm answerCallbackQuery xatosi:', err.message);
     }
     try {
-      await bot.editMessageText('<tg-emoji emoji-id=\"5174818074167083884\">🚀</tg-emoji> Xabar yuborilmoqda, biroz kuting...', { chat_id: chatId, message_id: messageId });
+      await bot.editMessageText('<tg-emoji emoji-id=\"5174818074167083884\">🚀</tg-emoji> Xabar yuborilmoqda, biroz kuting...', { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
     } catch (err) {}
 
     const targets = [...USERS_DB];
@@ -3369,7 +3373,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...', { parse_mode: 'HTML' });
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("189 ball 'hisoblanmoqda' xabari xatosi:", err.message);
@@ -3485,7 +3489,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...', { parse_mode: 'HTML' });
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("Statistika 'hisoblanmoqda' xabari xatosi:", err.message);
@@ -3591,7 +3595,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...', { parse_mode: 'HTML' });
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("Kengaytirilgan qidiruv 'qidirilmoqda' xabari xatosi:", err.message);
@@ -3673,7 +3677,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...', { parse_mode: 'HTML' });
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("189 ball statistikasi 'hisoblanmoqda' xabari xatosi:", err.message);
@@ -4084,7 +4088,7 @@ bot.on('message', async (msg) => {
 
   let thinkingMsgId = null;
   try {
-    const thinkingMsg = await bot.sendMessage(msg.chat.id, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...');
+    const thinkingMsg = await bot.sendMessage(msg.chat.id, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...', { parse_mode: 'HTML' });
     thinkingMsgId = thinkingMsg.message_id;
   } catch (err) {
     console.error("Mandat ID 'qidirilmoqda' xabari xatosi:", err.message);
@@ -4104,6 +4108,7 @@ bot.on('message', async (msg) => {
         await bot.editMessageText('<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> Reytingdagi o\'rningiz hisoblanmoqda...', {
           chat_id: msg.chat.id,
           message_id: thinkingMsgId,
+          parse_mode: 'HTML',
         });
       } catch (err) {}
     }
