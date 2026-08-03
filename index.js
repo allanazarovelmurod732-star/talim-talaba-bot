@@ -440,6 +440,85 @@ async function getKQTotalCount(s4subject, s5subject, edLangId, onProgress) {
   return { count: (hi - 1) * KQ_PAGE_SIZE + hiInfo.cards.length, approx: capped };
 }
 
+// Berilgan "threshold" balldan KATTA YOKI TENG ball to'plaganlar sonini aniqlaydi
+// (ro'yxat ball bo'yicha KAMAYISH tartibida ekanidan foydalanib, binary search bilan —
+// getKQTotalCount'dagi kabi, sahifalarni birma-bir sanamasdan)
+async function countEntriesWithScoreAtLeast(s4subject, s5subject, edLangId, threshold, onProgress) {
+  let requests = 0;
+  const fetchInfo = async (page) => {
+    requests++;
+    const info = await fetchKengaytirilganPageInfo(s4subject, s5subject, edLangId, page);
+    if (onProgress) onProgress({ page, requests });
+    return info;
+  };
+  const countInPage = (cards) =>
+    cards.filter((c) => {
+      const s = parseKQScoreNumber(c.scoreText);
+      return s !== null && s >= threshold;
+    }).length;
+
+  const firstInfo = await fetchInfo(1);
+  if (firstInfo.empty) return { count: 0, approx: false };
+
+  // Chegara birinchi sahifaning o'zida bo'lsa (ro'yxat tugagan yoki bu
+  // sahifadayoq threshold'dan pastga tushgan bo'lsa) — darhol sanab qaytaramiz
+  if (!firstInfo.full || firstInfo.bottomScore === null || firstInfo.bottomScore < threshold) {
+    return { count: countInPage(firstInfo.cards), approx: false };
+  }
+
+  // Eksponensial qidiruv: bottomScore threshold'dan pastga tushguncha (yoki
+  // ro'yxat tugaguncha) 2, 4, 8, 16... sahifalarni tekshiramiz
+  let lo = 1;
+  let hi = 2;
+  let hiInfo = await fetchInfo(hi);
+  let capped = false;
+  while (hiInfo.full && hiInfo.bottomScore !== null && hiInfo.bottomScore >= threshold) {
+    lo = hi;
+    hi *= 2;
+    if (hi > MAX_KQ_ID_SEARCH_PAGES) {
+      hi = MAX_KQ_ID_SEARCH_PAGES;
+      hiInfo = await fetchInfo(hi);
+      capped = hiInfo.full && hiInfo.bottomScore !== null && hiInfo.bottomScore >= threshold;
+      break;
+    }
+    hiInfo = await fetchInfo(hi);
+  }
+
+  if (capped) {
+    // Ro'yxat juda katta — aniq chegarani MAX_KQ_ID_SEARCH_PAGES ichida topib bo'lmadi
+    return { count: hi * KQ_PAGE_SIZE, approx: true };
+  }
+
+  // Binary search: lo (hali threshold'ga mos) va hi (endi mos emas) orasida
+  // chegara sahifasini topamiz
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    const midInfo = await fetchInfo(mid);
+    if (midInfo.full && midInfo.bottomScore !== null && midInfo.bottomScore >= threshold) {
+      lo = mid;
+    } else {
+      hi = mid;
+      hiInfo = midInfo;
+    }
+  }
+
+  return { count: lo * KQ_PAGE_SIZE + countInPage(hiInfo.cards), approx: false };
+}
+
+// Aynan 189 (yoki istalgan) ball to'plaganlar soni va shu balldan YUQORI
+// ball to'plaganlar sonini birgalikda hisoblaydi
+async function getKQScoreStats(s4subject, s5subject, edLangId, targetScore, onProgress) {
+  const [atLeastResult, aboveResult] = await Promise.all([
+    countEntriesWithScoreAtLeast(s4subject, s5subject, edLangId, targetScore, onProgress),
+    countEntriesWithScoreAtLeast(s4subject, s5subject, edLangId, targetScore + 0.001, onProgress),
+  ]);
+  return {
+    exactCount: Math.max(0, atLeastResult.count - aboveResult.count),
+    aboveCount: aboveResult.count,
+    approx: atLeastResult.approx || aboveResult.approx,
+  };
+}
+
 // ID orqali topilgan abituriyentning shu fanlar majmuasi + til bo'yicha
 // nechanchi o'rinda ekanini va ro'yxat jamisini aniqlashga urinadi
 // (majburiy ma'lumot yetarli bo'lmasa yoki xatolik bo'lsa, jimgina null qaytaradi)
@@ -1498,6 +1577,8 @@ const awaitingKQId = new Set();
 // (masalan, matematika-fizika kabi ommaviy yo'nalishlarni) to'liq qamrab oladi
 // (20000 sahifa = ~200 000 kishigacha)
 const MAX_KQ_ID_SEARCH_PAGES = 20000;
+// "189 ball statistikasi" tugmasi qaysi ball bo'yicha hisoblashini belgilaydi
+const KQ_TARGET_SCORE = 189;
 
 function kengaytirilganSubjectScreen() {
   const text =
@@ -1549,10 +1630,27 @@ function kengaytirilganModeScreen(subject, langLabel) {
   const keyboard = [
     [btn({ text: "📋 To'liq ro'yxatni ko'rish", callback_data: 'kq_mode_list', style: 'primary' })],
     [btn({ text: "🆔 ID orqali o'rnimni topish", callback_data: 'kq_mode_id', style: 'success' })],
+    [btn({ text: '📊 189 ball statistikasi', callback_data: 'kq_mode_189', style: 'danger' })],
     backRow,
   ];
 
   return { text, keyboard };
+}
+
+// "189 ball statistikasi" natijasini matn ko'rinishida tayyorlaydi
+function formatKQ189Result(filters, stats, targetScore) {
+  const approxNote = stats.approx
+    ? `\n\n<i>⚠️ Ro'yxat juda katta bo'lgani uchun natija taxminiy (yaqin son).</i>`
+    : '';
+
+  return (
+    `📊 <b>${targetScore} ball statistikasi</b>\n\n` +
+    `📚 Fanlar majmuasi: <b>${filters.subject}</b>\n` +
+    `🌐 Ta'lim tili: <b>${filters.langLabel}</b>\n\n` +
+    `🎯 Aynan <b>${targetScore}</b> ball to'plaganlar: <b>${stats.exactCount}</b> ta\n` +
+    `📈 <b>${targetScore}</b> balldan yuqori to'plaganlar: <b>${stats.aboveCount}</b> ta` +
+    approxNote
+  );
 }
 
 // Zaxira usul: agar abituriyentning ballini oldindan bilib bo'lmasa (masalan,
@@ -2986,6 +3084,77 @@ bot.on('callback_query', async (query) => {
       }
     } else {
       await safeSend(chatId, rendered.text, rendered.keyboard);
+    }
+    return;
+  }
+
+  // "Kengaytirilgan qidiruv" — "189 ball statistikasi" tanlandi -> saytdan
+  // hisoblab, aynan 189 va 189 balldan yuqori to'plaganlar sonini ko'rsatamiz
+  if (query.data === 'kq_mode_189') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const filters = pendingKQFilters.get(userId);
+    if (!filters) {
+      try {
+        await bot.sendMessage(chatId, "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {}
+      return;
+    }
+
+    let thinkingMsgId = null;
+    try {
+      const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      thinkingMsgId = thinkingMsg.message_id;
+    } catch (err) {
+      console.error("189 ball statistikasi 'hisoblanmoqda' xabari xatosi:", err.message);
+    }
+
+    let stats = null;
+    let fetchErr = null;
+    try {
+      stats = await getKQScoreStats(filters.s4subject, filters.s5subject, filters.edLangId, KQ_TARGET_SCORE);
+    } catch (err) {
+      fetchErr = err;
+      console.error('189 ball statistikasi hisoblashda xatolik:', err.message);
+    }
+
+    if (fetchErr || !stats) {
+      const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      if (thinkingMsgId) {
+        try {
+          await bot.editMessageText(errText, {
+            chat_id: chatId,
+            message_id: thinkingMsgId,
+            reply_markup: { inline_keyboard: [backRow] },
+          });
+        } catch (err) {}
+      } else {
+        await safeSend(chatId, errText, [backRow]);
+      }
+      return;
+    }
+
+    const resultText = formatKQ189Result(filters, stats, KQ_TARGET_SCORE);
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText(resultText, {
+          chat_id: chatId,
+          message_id: thinkingMsgId,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {
+        console.error('189 ball statistikasi natijasini tahrirlashda xatolik:', err.message);
+      }
+    } else {
+      await safeSend(chatId, resultText, [backRow]);
     }
     return;
   }
