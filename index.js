@@ -158,7 +158,7 @@ const awaitingMandatId = new Set();
 function formatMandatIdResult(result, entrantId, rankInfo) {
   if (!result || !result.name) {
     return (
-      `❌ <b>${entrantId}</b> ID raqami bo'yicha natija topilmadi.\n\n` +
+      `<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> <b>${entrantId}</b> ID raqami bo'yicha natija topilmadi.\n\n` +
       `<i>ID raqamini tekshirib qayta yuboring, yoki hali natija e'lon qilinmagan bo'lishi mumkin.</i>`
     );
   }
@@ -166,21 +166,21 @@ function formatMandatIdResult(result, entrantId, rankInfo) {
   const { name, scoreText, thresholdText, subjects } = result;
 
   let text =
-    `✅ <b>${name}</b>\n` +
-    `🆔 ID: <b>${entrantId}</b>\n` +
-    (scoreText ? `🎯 Ball: <b>${scoreText}</b>\n` : '') +
-    (thresholdText ? `🚩 ${thresholdText}\n` : '');
+    `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> <b>${name}</b>\n` +
+    `<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> ID: <b>${entrantId}</b>\n` +
+    (scoreText ? `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> Ball: <b>${scoreText}</b>\n` : '') +
+    (thresholdText ? `<tg-emoji emoji-id=\"5460755126761312667\">🚩</tg-emoji> ${thresholdText}\n` : '');
 
   if (rankInfo) {
     const totalStr = `${rankInfo.approxTotal ? '~' : ''}${rankInfo.total}`;
-    text += `🏆 Reytingda: <b>${rankInfo.rank}-o'rin</b> (jami ${totalStr} ta abituriyent ichida)\n`;
+    text += `<tg-emoji emoji-id=\"5244590801438138696\">🏆</tg-emoji> Reytingda: <b>${rankInfo.rank}-o'rin</b> (jami ${totalStr} ta abituriyent ichida)\n`;
   }
 
   if (subjects) {
     const combo = [subjects.fan1, subjects.fan2].filter(Boolean).join(' + ');
     const comboLine = combo || subjects.majburiy;
     if (comboLine) {
-      text += `📚 Topilgan yo'nalish: <b>${comboLine}${subjects.til ? ` + ${subjects.til}` : ''}</b>\n`;
+      text += `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> Topilgan yo'nalish: <b>${comboLine}${subjects.til ? ` + ${subjects.til}` : ''}</b>\n`;
     }
   }
 
@@ -603,7 +603,7 @@ async function askForMandatId(chatId, userId) {
   try {
     await bot.sendMessage(
       chatId,
-      `🆔 <b>Natijamni tekshirish</b>\n\n` +
+      `<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> <b>Natijamni tekshirish</b>\n\n` +
         `Abituriyent ID raqamingizni (7 xonali) yozing, masalan: <b>5506347</b>.\n\n` +
         `Bot <b>mandat.uzbmb.uz</b> saytidan sizning shaxsiy natijangizni jonli tarzda olib ko'rsatadi ` +
         `— boshqa hech kimning ma'lumoti ko'rsatilmaydi yoki saqlanmaydi.`,
@@ -894,31 +894,31 @@ function classifyYonalishItem(item, ball, qabulTuri) {
   // bo'lgani uchun bu yo'nalish "kira oladi" deb ko'rsatilmaydi.
   if (qabulTuri === 'grant') {
     return grantOk
-      ? { qualifies: true, status: '🟢 Balingiz grantga yetadi' }
+      ? { qualifies: true, status: '<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Balingiz grantga yetadi' }
       : { qualifies: false, status: null };
   }
   if (qabulTuri === 'kontrakt') {
     return kontraktOk
-      ? { qualifies: true, status: '🔵 Balingiz kontraktga yetadi' }
+      ? { qualifies: true, status: '<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Balingiz kontraktga yetadi' }
       : { qualifies: false, status: null };
   }
 
   // 'both' — avval grant, bo'lmasa kontrakt
   if (grantOk) {
-    return { qualifies: true, status: '🟢 Balingiz grantga yetadi' };
+    return { qualifies: true, status: '<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Balingiz grantga yetadi' };
   }
   if (kontraktOk) {
-    return { qualifies: true, status: '🔵 Balingiz faqat kontraktga yetadi' };
+    return { qualifies: true, status: '<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Balingiz faqat kontraktga yetadi' };
   }
   return { qualifies: false, status: null };
 }
 
 function formatYonalishItemLine(r, num) {
   return (
-    `<b>${num}.</b> 🏫 <b>${r.otm}</b>\n` +
-    `📚 ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
-    `🟢 Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
-    `🔵 Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota\n` +
+    `<b>${num}.</b> <tg-emoji emoji-id=\"5233623301800093885\">🏫</tg-emoji> <b>${r.otm}</b>\n` +
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
+    `<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
+    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota\n` +
     r._status
   );
 }
@@ -940,10 +940,10 @@ function renderYonalishResultsPage(userId) {
   const tanlovKeys = new Set(tanlov.map((t) => t.key));
 
   const header =
-    `🔎 Fanlar majmuasi: <b>${subject}</b>\n` +
-    (qabulTuriLabel ? `💰 Qabul turi: <b>${qabulTuriLabel}</b>\n` : '') +
-    `🎯 Balingiz: <b>${ball}</b>\n\n` +
-    `✅ Kira oladigan yo'nalishlar: <b>${items.length}</b> ta (${page + 1}/${totalPages}-sahifa)\n\n` +
+    `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n` +
+    (qabulTuriLabel ? `<tg-emoji emoji-id=\"5409048419211682843\">💰</tg-emoji> Qabul turi: <b>${qabulTuriLabel}</b>\n` : '') +
+    `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> Balingiz: <b>${ball}</b>\n\n` +
+    `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Kira oladigan yo'nalishlar: <b>${items.length}</b> ta (${page + 1}/${totalPages}-sahifa)\n\n` +
     `<i>Yoqqan yo'nalish tagidagi tugma orqali uni "Mening 5 ta tanlovim" ro'yxatiga qo'shishingiz mumkin (${tanlov.length}/${TANLOV_MAX}).</i>\n\n`;
 
   const body = pageItems.map((r, i) => formatYonalishItemLine(r, start + i + 1)).join('\n\n');
@@ -1252,7 +1252,7 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
   return button;
 }
 
-const backRow = [btn({ text: 'Orqaga', callback_data: 'menu_back', icon: EMOJI.homeIcon, style: 'danger' })];
+const backRow = [btn({ text: 'Bosh menyu', callback_data: 'menu_back', icon: EMOJI.homeIcon, style: 'danger' })];
 // Ta'lim kanalimiz / Test Platformamiz / Founder / FAQ / Botni baholang endi
 // "Biz haqimizda" submenyusi ichida bo'lgani uchun, ularning "Orqaga" tugmasi
 // to'g'ridan-to'g'ri asosiy menyuga emas, shu submenyuga qaytaradi
@@ -1339,9 +1339,9 @@ function gateScreen() {
 // ---------------------------------------------------------------------------
 function mainMenuScreen() {
   const text =
-    `🎓 <b>Ta'lim Talaba</b> botiga xush kelibsiz!\n\n` +
+    `<tg-emoji emoji-id=\"5472411062412254753\">🎓</tg-emoji> <b>Ta'lim Talaba</b> botiga xush kelibsiz!\n\n` +
     `Bu yerda siz <b>ta'lim sohasidagi</b> eng so'nggi yangiliklar, foydali test platformalari va bot haqida ma'lumotlarni topasiz.\n\n` +
-    `<i>Quyidagi bo'limlardan birini tanlang yoki savol yozing</i> 👇`;
+    `<i>Quyidagi bo'limlardan birini tanlang yoki savol yozing</i> <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: 'Mandat tanlash', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.targetIcon })],
@@ -1368,8 +1368,8 @@ function mainMenuScreen() {
 // ---------------------------------------------------------------------------
 function aboutScreen() {
   const text =
-    `🏢 <b>Biz haqimizda</b>\n\n` +
-    `<i>Quyidagi bo'limlardan birini tanlang</i> 👇`;
+    `<tg-emoji emoji-id=\"5321172885824347698\">🏢</tg-emoji> <b>Biz haqimizda</b>\n\n` +
+    `<i>Quyidagi bo'limlardan birini tanlang</i> <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: "Ta'lim kanalimiz", callback_data: 'menu_channel', icon: EMOJI.channelMenuIcon, style: 'primary' })],
@@ -1446,7 +1446,7 @@ function founderScreen() {
 
 function faqScreen() {
   const text =
-    `❓ <b>Tez-tez so'raladigan savollar</b>\n\n` +
+    `<tg-emoji emoji-id=\"5314504236132747481\">❓</tg-emoji> <b>Tez-tez so'raladigan savollar</b>\n\n` +
     `<b>1. Bot bepulmi?</b>\n` +
     `Ha, botning barcha imkoniyatlari to'liq bepul.\n\n` +
     `<b>2. AI qanday savollarga javob beradi?</b>\n` +
@@ -1466,7 +1466,7 @@ function faqScreen() {
 // ---------------------------------------------------------------------------
 function adminAdviceScreen() {
   const text =
-    `${emoji(EMOJI.giftIcon, '🟢')} <b>Admin 24/7</b>\n\n` +
+    `${emoji(EMOJI.giftIcon, '<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji>')} <b>Admin 24/7</b>\n\n` +
     `Yo'nalish tanlash bo'yicha shaxsiy maslahat kerakmi? Pastdagi tugmalar orqali ` +
     `to'g'ridan-to'g'ri adminga murojaat qiling — sizga qaysi yo'nalish(lar) mos kelishi haqida yordam beramiz.`;
 
@@ -1484,10 +1484,10 @@ function adminAdviceScreen() {
 // ---------------------------------------------------------------------------
 function formatTanlovItemLine(item, num) {
   return (
-    `<b>${num}.</b> 🏫 <b>${item.otm}</b>\n` +
-    `📚 ${item.nomi} · ${item.talimShakli} · ${item.til}\n` +
-    `🟢 Grant: <b>${item.grantBall || '—'}</b> ball, ${item.grantKvota || 0} kvota\n` +
-    `🔵 Kontrakt: <b>${item.kontraktBall || '—'}</b> ball, ${item.kontraktKvota || 0} kvota`
+    `<b>${num}.</b> <tg-emoji emoji-id=\"5233623301800093885\">🏫</tg-emoji> <b>${item.otm}</b>\n` +
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> ${item.nomi} · ${item.talimShakli} · ${item.til}\n` +
+    `<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Grant: <b>${item.grantBall || '—'}</b> ball, ${item.grantKvota || 0} kvota\n` +
+    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${item.kontraktBall || '—'}</b> ball, ${item.kontraktKvota || 0} kvota`
   );
 }
 
@@ -1496,10 +1496,10 @@ function tanlovScreen(userId) {
 
   if (!list.length) {
     const text =
-      `📋 <b>Mening 5 ta tanlovim</b>\n\n` +
+      `<tg-emoji emoji-id=\"5197269100878907942\">📋</tg-emoji> <b>Mening 5 ta tanlovim</b>\n\n` +
       `Hozircha ro'yxatingiz bo'sh.\n\n` +
       `Hujjat topshirishda O'zbekistonda 5 tagacha yo'nalish ko'rsatasiz — shu ro'yxatni oldindan tayyorlab qo'yish uchun ` +
-      `<b>"🎯 Mandat tanlash"</b> bo'limida qidiruv qiling va yoqqan yo'nalishlar tagidagi <b>"➕ Tanlovga qo'shish"</b> ` +
+      `<b>"<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> Mandat tanlash"</b> bo'limida qidiruv qiling va yoqqan yo'nalishlar tagidagi <b>"<tg-emoji emoji-id=\"5397916757333654639\">➕</tg-emoji> Tanlovga qo'shish"</b> ` +
       `tugmasini bosing.`;
     const keyboard = [
       [btn({ text: 'Mandat tanlash', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.targetIcon })],
@@ -1509,7 +1509,7 @@ function tanlovScreen(userId) {
   }
 
   const header =
-    `📋 <b>Mening 5 ta tanlovim</b> (${list.length}/${TANLOV_MAX})\n\n` +
+    `<tg-emoji emoji-id=\"5197269100878907942\">📋</tg-emoji> <b>Mening 5 ta tanlovim</b> (${list.length}/${TANLOV_MAX})\n\n` +
     `<i>O'zbekistonda hujjat topshirishda ko'rsatiladigan ustuvorlik tartibidagi kabi — birinchi yozilgani eng ustuvor.</i>\n\n`;
   const body = list.map((item, i) => formatTanlovItemLine(item, i + 1)).join('\n\n');
   const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
@@ -1538,23 +1538,23 @@ function ratingScreen(userId) {
 
   if (remaining <= 0) {
     const text =
-      `⭐ <b>Botni baholang</b>\n\n` +
+      `<tg-emoji emoji-id=\"5438496463044752972\">⭐</tg-emoji> <b>Botni baholang</b>\n\n` +
       `Siz bugun allaqachon <b>${BAHO_KUNLIK_LIMIT}</b> marta baholadingiz. ` +
-      `Rahmat! Ertaga yana baholashingiz mumkin bo'ladi 🙏`;
+      `Rahmat! Ertaga yana baholashingiz mumkin bo'ladi <tg-emoji emoji-id=\"5458603043203327669\">🙏</tg-emoji>`;
     return { text, keyboard: [backToAboutRow] };
   }
 
   const text =
-    `⭐ <b>Botni baholang</b>\n\n` +
+    `<tg-emoji emoji-id=\"5438496463044752972\">⭐</tg-emoji> <b>Botni baholang</b>\n\n` +
     `Bot sizga qanchalik foydali bo'ldi? Yulduzlar sonini tanlang, so'ng ` +
-    `<b>"✅ Yuborish"</b> tugmasini bosing.\n\n` +
+    `<b>"<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Yuborish"</b> tugmasini bosing.\n\n` +
     `<i>Bugun yana ${remaining} marta baholashingiz mumkin.</i>`;
 
   const keyboard = [];
   for (let n = 1; n <= 5; n++) {
     keyboard.push([
       btn({
-        text: '⭐'.repeat(n),
+        text: '<tg-emoji emoji-id=\"5438496463044752972\">⭐</tg-emoji>'.repeat(n),
         callback_data: `baho_select_${n}`,
         icon: EMOJI.starIcon,
         style: selected === n ? 'success' : 'primary',
@@ -1643,9 +1643,9 @@ const pendingYonalishShakl = new Map();
 // kelgunga qadar vaqtincha shu yerda saqlanadi (userId -> 'grant'|'kontrakt'|'both')
 const pendingYonalishQabulTuri = new Map();
 const QABUL_TURI_LABELS = {
-  grant: '🟢 Faqat Grant',
-  kontrakt: '🔵 Faqat Kontrakt',
-  both: '🟢🔵 Grant + Kontrakt',
+  grant: '<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Faqat Grant',
+  kontrakt: '<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Faqat Kontrakt',
+  both: '<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji><tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Grant + Kontrakt',
 };
 
 // ---------------------------------------------------------------------------
@@ -1702,12 +1702,12 @@ const B189_LANG_LABELS = {
 
 function ball189SubjectScreen() {
   const text =
-    `📊 <b>189 ball statistikasi</b>\n\n` +
+    `<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> <b>189 ball statistikasi</b>\n\n` +
     `Bu bo'lim orqali tanlagan fanlar majmuasi va ta'lim tili bo'yicha ` +
     `<b>aynan 189 ball</b> va <b>189 balldan yuqori</b> ball to'plagan abituriyentlar sonini bilib olasiz ` +
     `— bevosita <b>mandat.uzbmb.uz</b> saytidan, jonli hisoblab.\n\n` +
-    `Fanlar majmuangizni tanlang 👇\n\n` +
-    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosing.</i>`;
+    `Fanlar majmuangizni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosing.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
     btn({ text: subject, callback_data: `b189_subj_${i}`, style: 'primary' }),
@@ -1719,7 +1719,7 @@ function ball189SubjectScreen() {
 }
 
 function ball189LangScreen(subject) {
-  const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
+  const text = `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n\n<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tilini tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: "O'zbekcha", callback_data: 'b189_lang_1', style: 'primary', icon: '5271648932194195260' })],
@@ -1759,12 +1759,12 @@ const STAT_LANG_LABELS = {
 
 function statistikaSubjectScreen() {
   const text =
-    `📊 <b>Statistika super</b>\n\n` +
+    `<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> <b>Statistika super</b>\n\n` +
     `Bu bo'lim orqali tanlagan fanlar majmuasi va ta'lim tili bo'yicha ` +
     `abituriyentlarning <b>ball oraliqlari bo'yicha taqsimotini</b> bilib olasiz ` +
     `— bevosita <b>mandat.uzbmb.uz</b> saytidan, jonli hisoblab.\n\n` +
-    `Fanlar majmuangizni tanlang 👇\n\n` +
-    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosing.</i>`;
+    `Fanlar majmuangizni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosing.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
     btn({ text: subject, callback_data: `stat_subj_${i}`, style: 'primary' }),
@@ -1776,7 +1776,7 @@ function statistikaSubjectScreen() {
 }
 
 function statistikaLangScreen(subject) {
-  const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
+  const text = `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n\n<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tilini tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: "O'zbekcha", callback_data: 'stat_lang_1', style: 'primary', icon: '5271648932194195260' })],
@@ -1799,29 +1799,29 @@ async function askForStatLang(chatId, userId, subject) {
 // "Statistika super" natijasini matn ko'rinishida tayyorlaydi
 function formatStatResult(filters, bandStats) {
   const approxNote = bandStats.approx
-    ? `\n\n<i>⚠️ Ro'yxat juda katta bo'lgani uchun natija taxminiy (yaqin son).</i>`
+    ? `\n\n<i><tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Ro'yxat juda katta bo'lgani uchun natija taxminiy (yaqin son).</i>`
     : '';
 
-  const lines = STAT_BAND_LABELS.map((label, i) => `▫️ ${label}: <b>${bandStats.bands[i]}</b> ta`).join('\n');
+  const lines = STAT_BAND_LABELS.map((label, i) => `<tg-emoji emoji-id=\"5294243213245178729\">▫️</tg-emoji> ${label}: <b>${bandStats.bands[i]}</b> ta`).join('\n');
 
   return (
-    `📊 <b>Statistika super</b>\n\n` +
-    `📚 Fanlar majmuasi: <b>${filters.subject}</b>\n` +
-    `🌐 Ta'lim tili: <b>${filters.langLabel}</b>\n\n` +
+    `<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> <b>Statistika super</b>\n\n` +
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> Fanlar majmuasi: <b>${filters.subject}</b>\n` +
+    `<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tili: <b>${filters.langLabel}</b>\n\n` +
     `${lines}\n\n` +
-    `👥 Jami: <b>${bandStats.total}</b> ta` +
+    `<tg-emoji emoji-id=\"5319106456799158575\">👥</tg-emoji> Jami: <b>${bandStats.total}</b> ta` +
     approxNote
   );
 }
 
 function kengaytirilganSubjectScreen() {
   const text =
-    `🔎 <b>Kengaytirilgan qidiruv</b>\n\n` +
+    `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> <b>Kengaytirilgan qidiruv</b>\n\n` +
     `Bu bo'lim orqali tanlagan fanlar majmuasi va ta'lim tili bo'yicha ` +
     `<b>yakuniy mandatga kirgan barcha abituriyentlar ro'yxatini</b> ko'rishingiz mumkin ` +
     `— bevosita <b>mandat.uzbmb.uz</b> saytidan, xuddi saytning o'zidagidek.\n\n` +
-    `Fanlar majmuangizni tanlang 👇\n\n` +
-    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosing.</i>`;
+    `Fanlar majmuangizni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosing.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
     btn({ text: subject, callback_data: `kq_subj_${i}`, style: 'primary' }),
@@ -1833,7 +1833,7 @@ function kengaytirilganSubjectScreen() {
 }
 
 function kengaytirilganLangScreen(subject) {
-  const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
+  const text = `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n\n<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tilini tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: "O'zbekcha", callback_data: 'kq_lang_1', style: 'primary', icon: '5271648932194195260' })],
@@ -1857,9 +1857,9 @@ async function askForKQLang(chatId, userId, subject) {
 // ID orqali o'z o'rnini topishni tanlash ekrani
 function kengaytirilganModeScreen(subject, langLabel) {
   const text =
-    `✅ Fanlar majmuasi: <b>${subject}</b>\n` +
-    `✅ Ta'lim tili: <b>${langLabel}</b>\n\n` +
-    `Qanday ko'rmoqchisiz? 👇`;
+    `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n` +
+    `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Ta'lim tili: <b>${langLabel}</b>\n\n` +
+    `Qanday ko'rmoqchisiz? <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: "To'liq ro'yxatni ko'rish", callback_data: 'kq_mode_list', style: 'primary', icon: EMOJI.listIcon })],
@@ -1874,15 +1874,15 @@ function kengaytirilganModeScreen(subject, langLabel) {
 // "189 ball statistikasi" natijasini matn ko'rinishida tayyorlaydi
 function formatKQ189Result(filters, stats, targetScore) {
   const approxNote = stats.approx
-    ? `\n\n<i>⚠️ Ro'yxat juda katta bo'lgani uchun natija taxminiy (yaqin son).</i>`
+    ? `\n\n<i><tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Ro'yxat juda katta bo'lgani uchun natija taxminiy (yaqin son).</i>`
     : '';
 
   return (
-    `📊 <b>${targetScore} ball statistikasi</b>\n\n` +
-    `📚 Fanlar majmuasi: <b>${filters.subject}</b>\n` +
-    `🌐 Ta'lim tili: <b>${filters.langLabel}</b>\n\n` +
-    `🎯 Aynan <b>${targetScore}</b> ball to'plaganlar: <b>${stats.exactCount}</b> ta\n` +
-    `📈 <b>${targetScore}</b> balldan yuqori to'plaganlar: <b>${stats.aboveCount}</b> ta` +
+    `<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> <b>${targetScore} ball statistikasi</b>\n\n` +
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> Fanlar majmuasi: <b>${filters.subject}</b>\n` +
+    `<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tili: <b>${filters.langLabel}</b>\n\n` +
+    `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> Aynan <b>${targetScore}</b> ball to'plaganlar: <b>${stats.exactCount}</b> ta\n` +
+    `<tg-emoji emoji-id=\"5244837092042750681\">📈</tg-emoji> <b>${targetScore}</b> balldan yuqori to'plaganlar: <b>${stats.aboveCount}</b> ta` +
     approxNote
   );
 }
@@ -1916,9 +1916,9 @@ async function fetchKQEntrantLinearScan(s4subject, s5subject, edLangId, entrantI
 
 
 function formatKQCardLine(card, rank) {
-  let line = `🏅 <b>${rank}-o'rin</b>\n👤 <b>${card.name}</b>\n🆔 ID: <b>${card.id}</b>\n`;
-  if (card.scoreText) line += `🎯 Ball: <b>${card.scoreText}</b>\n`;
-  if (card.thresholdText) line += `🚩 ${card.thresholdText}\n`;
+  let line = `🏅 <b>${rank}-o'rin</b>\n👤 <b>${card.name}</b>\n<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> ID: <b>${card.id}</b>\n`;
+  if (card.scoreText) line += `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> Ball: <b>${card.scoreText}</b>\n`;
+  if (card.thresholdText) line += `<tg-emoji emoji-id=\"5460755126761312667\">🚩</tg-emoji> ${card.thresholdText}\n`;
   return line.trim();
 }
 
@@ -1930,14 +1930,14 @@ function formatKQIdFoundResult(card, rank, filters, subjects, totalInfo) {
     : '';
 
   let text =
-    `✅ <b>#${card.id} topildi — ${rank}-o'rinda!</b>\n\n` +
+    `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> <b>#${card.id} topildi — ${rank}-o'rinda!</b>\n\n` +
     `👤 <b>${card.name}</b>\n` +
     `🔢 ID: <b>${card.id}</b>\n` +
     `🏅 O'rni: <b>${rank}</b>${totalLine}\n` +
-    (card.scoreText ? `🎯 To'plangan ball: <b>${card.scoreText}</b>\n` : '') +
-    (card.thresholdText ? `🚩 ${card.thresholdText}\n` : '') +
-    `📚 Fanlar majmuasi: <b>${filters.subject}</b>\n` +
-    `🌐 Ta'lim tili: <b>${filters.langLabel}</b>\n`;
+    (card.scoreText ? `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> To'plangan ball: <b>${card.scoreText}</b>\n` : '') +
+    (card.thresholdText ? `<tg-emoji emoji-id=\"5460755126761312667\">🚩</tg-emoji> ${card.thresholdText}\n` : '') +
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> Fanlar majmuasi: <b>${filters.subject}</b>\n` +
+    `<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tili: <b>${filters.langLabel}</b>\n`;
 
   if (subjects) {
     text += `\n📖 <b>Tafsilot:</b>\n`;
@@ -1961,11 +1961,11 @@ function renderKQPage(userId) {
   const start = (page - 1) * KQ_PAGE_SIZE;
 
   const header =
-    `🔎 <b>Kengaytirilgan qidiruv</b>\n\n` +
-    `📚 Fanlar majmuasi: <b>${subject}</b>\n` +
-    `🌐 Ta'lim tili: <b>${langLabel}</b>\n\n` +
+    `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> <b>Kengaytirilgan qidiruv</b>\n\n` +
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n` +
+    `<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tili: <b>${langLabel}</b>\n\n` +
     (cards.length
-      ? `👥 <b>${page}</b>-sahifa (har sahifada ${KQ_PAGE_SIZE} tagacha):\n\n`
+      ? `<tg-emoji emoji-id=\"5319106456799158575\">👥</tg-emoji> <b>${page}</b>-sahifa (har sahifada ${KQ_PAGE_SIZE} tagacha):\n\n`
       : `😕 Bu fanlar majmuasi va til bo'yicha natija topilmadi.\n\n`);
 
   const body = cards.map((c, i) => formatKQCardLine(c, start + i + 1)).join('\n\n');
@@ -1983,9 +1983,9 @@ function renderKQPage(userId) {
 
 function yonalishSubjectScreen() {
   const text =
-    `🎯 <b>Mandat tanlash</b>\n\n` +
-    `Fanlar majmuangizni tanlang 👇\n\n` +
-    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosib, o'zingiz yozishingiz mumkin.</i>`;
+    `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> <b>Mandat tanlash</b>\n\n` +
+    `Fanlar majmuangizni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosib, o'zingiz yozishingiz mumkin.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
     btn({ text: subject, callback_data: `yon_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
@@ -1999,8 +1999,8 @@ function yonalishSubjectScreen() {
 // Fanlar majmuasi tanlangandan (yoki yozilgandan) keyin ta'lim tilini so'raydi
 function yonalishTilScreen(subject) {
   const text =
-    `✅ Fanlar majmuasi: <b>${subject}</b>\n\n` +
-    `🌐 Ta'lim tilini tanlang 👇`;
+    `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n\n` +
+    `<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tilini tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: "O'zbek", callback_data: 'yon_til_uz', style: 'primary', icon: '5271648932194195260' })],
@@ -2024,7 +2024,7 @@ async function askForYonalishTil(chatId, userId, subject) {
 
 // Ta'lim tili tanlangandan keyin ta'lim shaklini so'raydi
 function yonalishShaklScreen() {
-  const text = `🏫 Ta'lim shaklini tanlang 👇`;
+  const text = `<tg-emoji emoji-id=\"5233623301800093885\">🏫</tg-emoji> Ta'lim shaklini tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
     [btn({ text: 'Kunduzgi', callback_data: 'yon_shakl_kunduzgi', style: 'primary' })],
@@ -2044,7 +2044,7 @@ async function askForYonalishShakl(chatId, userId) {
 // Grant + Kontrakt) so'raydi
 function yonalishQabulTuriScreen() {
   const text =
-    `💰 Qabul turini tanlang 👇\n\n` +
+    `<tg-emoji emoji-id=\"5409048419211682843\">💰</tg-emoji> Qabul turini tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>\n\n` +
     `<i>Faqat grant, faqat kontrakt yoki ikkalasini birga ko'rishingiz mumkin.</i>`;
 
   const keyboard = [
@@ -2070,8 +2070,8 @@ async function askForYonalishBall(chatId, userId) {
   try {
     await bot.sendMessage(
       chatId,
-      `✅ Fanlar majmuasi: <b>${subject}</b>\n` +
-        (qabulTuriLabel ? `✅ Qabul turi: <b>${qabulTuriLabel}</b>\n` : '') +
+      `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n` +
+        (qabulTuriLabel ? `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Qabul turi: <b>${qabulTuriLabel}</b>\n` : '') +
         `\n🔢 Endi DTM balingizni raqam bilan yozing (masalan: <b>154.5</b>):`,
       { parse_mode: 'HTML' }
     );
@@ -2241,7 +2241,7 @@ bot.onText(/^\/id/, async (msg) => {
   try {
     await bot.sendMessage(
       msg.chat.id,
-      `🆔 Ushbu chatning ID raqami:\n<code>${msg.chat.id}</code>\n\n` +
+      `<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> Ushbu chatning ID raqami:\n<code>${msg.chat.id}</code>\n\n` +
         `Buni nusxalab, <code>.env</code> fayldagi <code>ADMIN_CHAT_ID</code> qatoriga joylashtiring.`,
       { parse_mode: 'HTML' }
     );
@@ -2263,7 +2263,7 @@ bot.onText(/^\/xabar/, async (msg) => {
     try {
       await bot.sendMessage(
         msg.chat.id,
-        "⚠️ Yubormoqchi bo'lgan xabaringizga (matn, rasm, video, fayl — nima bo'lsa ham) \"Reply\" qilib, shu ostiga <code>/xabar</code> deb yozing.",
+        "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Yubormoqchi bo'lgan xabaringizga (matn, rasm, video, fayl — nima bo'lsa ham) \"Reply\" qilib, shu ostiga <code>/xabar</code> deb yozing.",
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -2359,8 +2359,8 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
     await bot.sendMessage(
       msg.chat.id,
       MINI_APP_URL
-        ? `${emoji(EMOJI.greenIcon, '🟢')} Fikr-mulohaza yuborish yoki "Admin 24/7" orqali yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi tugmalardan foydalaning:`
-        : `${emoji(EMOJI.giftIcon, '🟢')} Yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi "Admin 24/7" tugmasidan foydalaning:`,
+        ? `${emoji(EMOJI.greenIcon, '<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji>')} Fikr-mulohaza yuborish yoki "Admin 24/7" orqali yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi tugmalardan foydalaning:`
+        : `${emoji(EMOJI.giftIcon, '<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji>')} Yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi "Admin 24/7" tugmasidan foydalaning:`,
       {
         parse_mode: 'HTML',
         reply_markup: {
@@ -2403,7 +2403,7 @@ bot.on('message', async (msg) => {
           ADMIN_CHAT_ID,
           `📩 <b>Yangi fikr-mulohaza</b>\n\n👤 ${fromLabel}\n\n${payload.text}\n\n` +
             `<i>Javob berish uchun shu xabarga "Reply" qiling — javobingiz avtomatik shu foydalanuvchiga yetkaziladi.</i>\n` +
-            `🆔 <code>${msg.chat.id}</code>`,
+            `<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> <code>${msg.chat.id}</code>`,
           { parse_mode: 'HTML' }
         );
         // Tezkor kirish uchun xotirada ham saqlaymiz (server qayta ishga tushsa,
@@ -2417,7 +2417,7 @@ bot.on('message', async (msg) => {
     }
 
     try {
-      await bot.sendMessage(msg.chat.id, "✅ Fikringiz uchun rahmat! U jamoamizga yetkazildi.");
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fikringiz uchun rahmat! U jamoamizga yetkazildi.");
     } catch (err) {
       console.error("Fikr-mulohaza tasdiqlash xabarini yuborishda xatolik:", err.message);
     }
@@ -2459,7 +2459,7 @@ bot.on('message', async (msg) => {
   if (!subject) {
     awaitingYonalishCustomSubject.add(userId);
     try {
-      await bot.sendMessage(msg.chat.id, "❗️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
     } catch (err) {
       console.error("Yo'nalish fanlar majmuasi validatsiya xabari xatosi:", err.message);
     }
@@ -2488,7 +2488,7 @@ bot.on('message', async (msg) => {
   if (!subject) {
     awaitingKQCustomSubject.add(userId);
     try {
-      await bot.sendMessage(msg.chat.id, "❗️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
     } catch (err) {
       console.error("Kengaytirilgan qidiruv fanlar majmuasi validatsiya xabari xatosi:", err.message);
     }
@@ -2517,7 +2517,7 @@ bot.on('message', async (msg) => {
   if (!subject) {
     awaiting189CustomSubject.add(userId);
     try {
-      await bot.sendMessage(msg.chat.id, "❗️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
     } catch (err) {
       console.error('189 ball fanlar majmuasi validatsiya xabari xatosi:', err.message);
     }
@@ -2546,7 +2546,7 @@ bot.on('message', async (msg) => {
   if (!subject) {
     awaitingStatCustomSubject.add(userId);
     try {
-      await bot.sendMessage(msg.chat.id, "❗️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
     } catch (err) {
       console.error('Statistika fanlar majmuasi validatsiya xabari xatosi:', err.message);
     }
@@ -2576,7 +2576,7 @@ bot.on('message', async (msg) => {
     try {
       await bot.sendMessage(
         msg.chat.id,
-        "❗️ Iltimos, 7 xonali abituriyent ID raqamini to'g'ri kiriting (masalan: 5506347)."
+        "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, 7 xonali abituriyent ID raqamini to'g'ri kiriting (masalan: 5506347)."
       );
     } catch (err) {
       console.error('Kengaytirilgan qidiruv ID validatsiya xabari xatosi:', err.message);
@@ -2589,7 +2589,7 @@ bot.on('message', async (msg) => {
   const filters = pendingKQFilters.get(userId);
   if (!filters) {
     try {
-      await bot.sendMessage(msg.chat.id, "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
         reply_markup: { inline_keyboard: [backRow] },
       });
     } catch (err) {
@@ -2602,7 +2602,7 @@ bot.on('message', async (msg) => {
   try {
     const progressMsg = await bot.sendMessage(
       msg.chat.id,
-      `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda...`
+      `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda...`
     );
     progressMsgId = progressMsg.message_id;
   } catch (err) {
@@ -2613,7 +2613,7 @@ bot.on('message', async (msg) => {
     if (!progressMsgId) return;
     try {
       await bot.editMessageText(
-        `🔎 "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda...${extra ? `\n${extra}` : ''}`,
+        `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> "${filters.subject}" ro'yxatidan #${entrantId} qidirilmoqda...${extra ? `\n${extra}` : ''}`,
         { chat_id: msg.chat.id, message_id: progressMsgId }
       );
     } catch (err) {}
@@ -2659,7 +2659,7 @@ bot.on('message', async (msg) => {
   pendingKQFilters.delete(userId);
 
   if (searchErr) {
-    const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+    const errText = "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
     if (progressMsgId) {
       try {
         await bot.editMessageText(errText, {
@@ -2701,7 +2701,7 @@ bot.on('message', async (msg) => {
   }
 
   if (searchErr) {
-    const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+    const errText = "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
     if (progressMsgId) {
       try {
         await bot.editMessageText(errText, {
@@ -2718,7 +2718,7 @@ bot.on('message', async (msg) => {
 
   if (!searchResult || !searchResult.found) {
     const notFoundText =
-      `❌ <b>#${entrantId}</b> ID "<b>${filters.subject}</b>" (${filters.langLabel}) ro'yxatidan topilmadi.\n\n` +
+      `<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> <b>#${entrantId}</b> ID "<b>${filters.subject}</b>" (${filters.langLabel}) ro'yxatidan topilmadi.\n\n` +
       `<i>Bu ID boshqa fanlar majmuasi yoki ta'lim tili bo'yicha yakuniy mandatga kirgan bo'lishi mumkin — ` +
       `shu majmua/tilni tekshirib qayta urinib ko'ring, yoki ID raqamini qayta tekshiring.</i>`;
     if (progressMsgId) {
@@ -2797,7 +2797,7 @@ bot.on('message', async (msg) => {
     try {
       await bot.sendMessage(
         msg.chat.id,
-        "❗️ Iltimos, to'g'ri raqam kiriting (0 dan 189 gacha), masalan: <b>154.5</b>",
+        "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, to'g'ri raqam kiriting (0 dan 189 gacha), masalan: <b>154.5</b>",
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -2911,11 +2911,11 @@ bot.on('message', async (msg) => {
     } else {
       await bot.sendMessage(targetChatId, '💬 Jamoamizdan sizga javob keldi, lekin bu turdagi xabarni yuborib bo\'lmadi.');
     }
-    await bot.sendMessage(msg.chat.id, '✅ Javobingiz foydalanuvchiga yetkazildi.');
+    await bot.sendMessage(msg.chat.id, '<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Javobingiz foydalanuvchiga yetkazildi.');
   } catch (err) {
     console.error('Admin javobini foydalanuvchiga yetkazishda xatolik:', err.message);
     try {
-      await bot.sendMessage(msg.chat.id, "❌ Javobni yetkazib bo'lmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).");
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Javobni yetkazib bo'lmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).");
     } catch (e) {}
   }
 });
@@ -3021,7 +3021,7 @@ bot.on('callback_query', async (query) => {
       console.error('broadcast_cancel answerCallbackQuery xatosi:', err.message);
     }
     try {
-      await bot.editMessageText("❌ Xabar yuborish bekor qilindi.", { chat_id: chatId, message_id: messageId });
+      await bot.editMessageText("<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Xabar yuborish bekor qilindi.", { chat_id: chatId, message_id: messageId });
     } catch (err) {}
     return;
   }
@@ -3030,7 +3030,7 @@ bot.on('callback_query', async (query) => {
   if (query.data === 'broadcast_confirm') {
     if (!pendingBroadcast) {
       try {
-        await bot.answerCallbackQuery(query.id, { text: "⚠️ Yuboriladigan xabar topilmadi.", show_alert: true });
+        await bot.answerCallbackQuery(query.id, { text: "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Yuboriladigan xabar topilmadi.", show_alert: true });
       } catch (err) {}
       return;
     }
@@ -3039,12 +3039,12 @@ bot.on('callback_query', async (query) => {
     pendingBroadcast = null;
 
     try {
-      await bot.answerCallbackQuery(query.id, { text: '🚀 Yuborish boshlandi...' });
+      await bot.answerCallbackQuery(query.id, { text: '<tg-emoji emoji-id=\"5174818074167083884\">🚀</tg-emoji> Yuborish boshlandi...' });
     } catch (err) {
       console.error('broadcast_confirm answerCallbackQuery xatosi:', err.message);
     }
     try {
-      await bot.editMessageText('🚀 Xabar yuborilmoqda, biroz kuting...', { chat_id: chatId, message_id: messageId });
+      await bot.editMessageText('<tg-emoji emoji-id=\"5174818074167083884\">🚀</tg-emoji> Xabar yuborilmoqda, biroz kuting...', { chat_id: chatId, message_id: messageId });
     } catch (err) {}
 
     const targets = [...USERS_DB];
@@ -3065,7 +3065,7 @@ bot.on('callback_query', async (query) => {
     try {
       await bot.sendMessage(
         chatId,
-        `✅ Xabar yuborish yakunlandi.\n\n📨 Yuborildi: <b>${sent}</b>\n🚫 Yetkazilmadi: <b>${failed}</b>`,
+        `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Xabar yuborish yakunlandi.\n\n<tg-emoji emoji-id=\"5253742260054409879\">📨</tg-emoji> Yuborildi: <b>${sent}</b>\n<tg-emoji emoji-id=\"5240241223632954241\">🚫</tg-emoji> Yetkazilmadi: <b>${failed}</b>`,
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -3114,7 +3114,7 @@ bot.on('callback_query', async (query) => {
     try {
       await bot.sendMessage(
         chatId,
-        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
+        "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -3205,13 +3205,13 @@ bot.on('callback_query', async (query) => {
     let alertText;
     if (alreadyIn) {
       removeFromTanlov(userId, getUserTanlov(userId).findIndex((t) => t.key === tanlovItemKey(item)));
-      alertText = '❌ Tanlovdan olib tashlandi.';
+      alertText = '<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Tanlovdan olib tashlandi.';
     } else {
       const res = addToTanlov(userId, item);
       if (res.ok) {
-        alertText = `✅ Tanlovga qo'shildi! (${getUserTanlov(userId).length}/${TANLOV_MAX})`;
+        alertText = `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Tanlovga qo'shildi! (${getUserTanlov(userId).length}/${TANLOV_MAX})`;
       } else if (res.reason === 'full') {
-        alertText = `⚠️ Siz allaqachon ${TANLOV_MAX} ta yo'nalish tanladingiz. Avval birortasini olib tashlang.`;
+        alertText = `<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Siz allaqachon ${TANLOV_MAX} ta yo'nalish tanladingiz. Avval birortasini olib tashlang.`;
       } else {
         alertText = 'ℹ️ Bu yo\'nalish allaqachon ro\'yxatingizda bor.';
       }
@@ -3257,7 +3257,7 @@ bot.on('callback_query', async (query) => {
     try {
       await bot.sendMessage(
         chatId,
-        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
+        "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -3293,7 +3293,7 @@ bot.on('callback_query', async (query) => {
     try {
       await bot.sendMessage(
         chatId,
-        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
+        "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -3320,7 +3320,7 @@ bot.on('callback_query', async (query) => {
       try {
         await bot.sendMessage(
           chatId,
-          `❗️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
+          `<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
           { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
         );
       } catch (err) {
@@ -3333,7 +3333,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...');
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("189 ball 'hisoblanmoqda' xabari xatosi:", err.message);
@@ -3349,7 +3349,7 @@ bot.on('callback_query', async (query) => {
     }
 
     if (fetchErr || !stats) {
-      const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      const errText = "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
       if (thinkingMsgId) {
         try {
           await bot.editMessageText(errText, {
@@ -3409,7 +3409,7 @@ bot.on('callback_query', async (query) => {
     try {
       await bot.sendMessage(
         chatId,
-        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
+        "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -3436,7 +3436,7 @@ bot.on('callback_query', async (query) => {
       try {
         await bot.sendMessage(
           chatId,
-          `❗️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
+          `<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
           { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
         );
       } catch (err) {
@@ -3449,7 +3449,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...');
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("Statistika 'hisoblanmoqda' xabari xatosi:", err.message);
@@ -3465,7 +3465,7 @@ bot.on('callback_query', async (query) => {
     }
 
     if (fetchErr || !bandStats) {
-      const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      const errText = "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
       if (thinkingMsgId) {
         try {
           await bot.editMessageText(errText, {
@@ -3517,7 +3517,7 @@ bot.on('callback_query', async (query) => {
       try {
         await bot.sendMessage(
           chatId,
-          `❗️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
+          `<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
           { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
         );
       } catch (err) {
@@ -3546,7 +3546,7 @@ bot.on('callback_query', async (query) => {
     const filters = pendingKQFilters.get(userId);
     if (!filters) {
       try {
-        await bot.sendMessage(chatId, "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
+        await bot.sendMessage(chatId, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
           reply_markup: { inline_keyboard: [backRow] },
         });
       } catch (err) {}
@@ -3555,7 +3555,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan qidirilmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...');
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("Kengaytirilgan qidiruv 'qidirilmoqda' xabari xatosi:", err.message);
@@ -3571,7 +3571,7 @@ bot.on('callback_query', async (query) => {
     }
 
     if (fetchErr) {
-      const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      const errText = "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
       if (thinkingMsgId) {
         try {
           await bot.editMessageText(errText, {
@@ -3628,7 +3628,7 @@ bot.on('callback_query', async (query) => {
     const filters = pendingKQFilters.get(userId);
     if (!filters) {
       try {
-        await bot.sendMessage(chatId, "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
+        await bot.sendMessage(chatId, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Avval fanlar majmuasi va ta'lim tilini tanlang.", {
           reply_markup: { inline_keyboard: [backRow] },
         });
       } catch (err) {}
@@ -3637,7 +3637,7 @@ bot.on('callback_query', async (query) => {
 
     let thinkingMsgId = null;
     try {
-      const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda...');
       thinkingMsgId = thinkingMsg.message_id;
     } catch (err) {
       console.error("189 ball statistikasi 'hisoblanmoqda' xabari xatosi:", err.message);
@@ -3653,7 +3653,7 @@ bot.on('callback_query', async (query) => {
     }
 
     if (fetchErr || !stats) {
-      const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      const errText = "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
       if (thinkingMsgId) {
         try {
           await bot.editMessageText(errText, {
@@ -3691,7 +3691,7 @@ bot.on('callback_query', async (query) => {
     if (!pendingKQFilters.has(userId)) {
       try {
         await bot.answerCallbackQuery(query.id, {
-          text: "❗️ Avval fanlar majmuasi va ta'lim tilini tanlang.",
+          text: "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Avval fanlar majmuasi va ta'lim tilini tanlang.",
           show_alert: true,
         });
       } catch (err) {}
@@ -3707,7 +3707,7 @@ bot.on('callback_query', async (query) => {
     try {
       await bot.sendMessage(
         chatId,
-        `🆔 Abituriyent ID raqamingizni (7 xonali) yozing, masalan: <b>5506347</b>.`,
+        `<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> Abituriyent ID raqamingizni (7 xonali) yozing, masalan: <b>5506347</b>.`,
         { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
       );
     } catch (err) {
@@ -3751,7 +3751,7 @@ bot.on('callback_query', async (query) => {
     if (fetchErr) {
       try {
         await bot.answerCallbackQuery(query.id, {
-          text: "❌ Xatolik yuz berdi, qayta urinib ko'ring.",
+          text: "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Xatolik yuz berdi, qayta urinib ko'ring.",
           show_alert: true,
         });
       } catch (err) {}
@@ -3867,7 +3867,7 @@ bot.on('callback_query', async (query) => {
     if (!selected) {
       try {
         await bot.answerCallbackQuery(query.id, {
-          text: '⚠️ Avval yulduzlar sonini tanlang.',
+          text: '<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Avval yulduzlar sonini tanlang.',
           show_alert: true,
         });
       } catch (err) {
@@ -3882,7 +3882,7 @@ bot.on('callback_query', async (query) => {
     if (!res.ok) {
       try {
         await bot.answerCallbackQuery(query.id, {
-          text: `⚠️ Siz bugun allaqachon ${BAHO_KUNLIK_LIMIT} marta baholadingiz. Ertaga qayta urinib ko'ring!`,
+          text: `<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Siz bugun allaqachon ${BAHO_KUNLIK_LIMIT} marta baholadingiz. Ertaga qayta urinib ko'ring!`,
           show_alert: true,
         });
       } catch (err) {
@@ -3894,14 +3894,14 @@ bot.on('callback_query', async (query) => {
     }
 
     try {
-      await bot.answerCallbackQuery(query.id, { text: '✅ Bahoyingiz yuborildi!' });
+      await bot.answerCallbackQuery(query.id, { text: '<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Bahoyingiz yuborildi!' });
     } catch (err) {
       console.error('answerCallbackQuery xatosi:', err.message);
     }
 
     const thankYouText =
-      `${'⭐'.repeat(selected)}\n\n` +
-      `Bahoyingiz uchun rahmat! Siz bizning yaxshilanishimizga yordam bermoqdasiz! 🙏`;
+      `${'<tg-emoji emoji-id=\"5438496463044752972\">⭐</tg-emoji>'.repeat(selected)}\n\n` +
+      `Bahoyingiz uchun rahmat! Siz bizning yaxshilanishimizga yordam bermoqdasiz! <tg-emoji emoji-id=\"5458603043203327669\">🙏</tg-emoji>`;
     await editRatingScreen(chatId, messageId, thankYouText, [backToAboutRow]);
     return;
   }
@@ -3919,14 +3919,14 @@ bot.on('callback_query', async (query) => {
       await deleteMessageSafe(chatId, messageId);
       await sendMainMenu(chatId, isGroup);
       try {
-        await bot.answerCallbackQuery(query.id, { text: '✅ Obuna tasdiqlandi!' });
+        await bot.answerCallbackQuery(query.id, { text: '<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Obuna tasdiqlandi!' });
       } catch (err) {
         console.error('answerCallbackQuery xatosi:', err.message);
       }
     } else {
       try {
         await bot.answerCallbackQuery(query.id, {
-          text: "❌ Siz hali barcha kanallarga obuna bo'lmagansiz. Iltimos, avval obuna bo'ling.",
+          text: "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Siz hali barcha kanallarga obuna bo'lmagansiz. Iltimos, avval obuna bo'ling.",
           show_alert: true,
         });
       } catch (err) {
@@ -3957,7 +3957,7 @@ bot.on('callback_query', async (query) => {
       await safeSend(chatId, text, keyboard);
       try {
         await bot.answerCallbackQuery(query.id, {
-          text: "❌ Avval kanallarga obuna bo'ling.",
+          text: "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Avval kanallarga obuna bo'ling.",
           show_alert: true,
         });
       } catch (err) {
@@ -4030,7 +4030,7 @@ bot.on('message', async (msg) => {
     try {
       await bot.sendMessage(
         msg.chat.id,
-        "❗️ Iltimos, 7 xonali abituriyent ID raqamini to'g'ri kiriting (masalan: 5506347)."
+        "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, 7 xonali abituriyent ID raqamini to'g'ri kiriting (masalan: 5506347)."
       );
     } catch (err) {
       console.error('Mandat ID validatsiya xabari xatosi:', err.message);
@@ -4048,7 +4048,7 @@ bot.on('message', async (msg) => {
 
   let thinkingMsgId = null;
   try {
-    const thinkingMsg = await bot.sendMessage(msg.chat.id, '🔎 mandat.uzbmb.uz saytidan qidirilmoqda...');
+    const thinkingMsg = await bot.sendMessage(msg.chat.id, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...');
     thinkingMsgId = thinkingMsg.message_id;
   } catch (err) {
     console.error("Mandat ID 'qidirilmoqda' xabari xatosi:", err.message);
@@ -4065,7 +4065,7 @@ bot.on('message', async (msg) => {
   if (result && result.name) {
     if (thinkingMsgId) {
       try {
-        await bot.editMessageText('📊 Reytingdagi o\'rningiz hisoblanmoqda...', {
+        await bot.editMessageText('<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> Reytingdagi o\'rningiz hisoblanmoqda...', {
           chat_id: msg.chat.id,
           message_id: thinkingMsgId,
         });
@@ -4138,7 +4138,7 @@ const app = express();
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.send("Ta'lim Talaba bot ishlamoqda ✅");
+  res.send("Ta'lim Talaba bot ishlamoqda <tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji>");
 });
 
 app.post(`/bot${BOT_TOKEN}`, (req, res) => {
