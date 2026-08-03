@@ -1275,7 +1275,7 @@ function mainMenuScreen() {
 
   if (MINI_APP_URL) {
     keyboard.push([
-      btn({ text: 'Mini ilovani ochish', web_app: { url: MINI_APP_URL }, style: 'primary' }),
+      btn({ text: 'Qulay ilova', web_app: { url: MINI_APP_URL }, style: 'primary' }),
     ]);
   }
 
@@ -2162,7 +2162,7 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   if (MINI_APP_URL) {
     bottomKeyboardRows.push([
       {
-        text: 'Mini ilova (fikr-mulohaza uchun)',
+        text: 'Qulay ilova',
         web_app: { url: MINI_APP_URL },
         style: 'success',
         icon_custom_emoji_id: '5443038326535759644',
@@ -3796,7 +3796,7 @@ async function configureBot() {
       await bot.setChatMenuButton({
         menu_button: {
           type: 'web_app',
-          text: 'Mini ilova',
+          text: 'Qulay ilova',
           web_app: { url: MINI_APP_URL },
         },
       });
