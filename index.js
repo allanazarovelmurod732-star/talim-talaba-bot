@@ -1267,6 +1267,7 @@ function mainMenuScreen() {
     [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
     [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
     [btn({ text: '🔎 Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger' })],
+    [btn({ text: '📊 189 ball', callback_data: 'menu_189', style: 'primary' })],
     [btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })],
     [btn({ text: "🆔 Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger' })],
     [btn({ text: 'Botni baholang', callback_data: 'menu_baho', icon: EMOJI.starIcon, style: 'success' })],
@@ -1580,6 +1581,63 @@ const MAX_KQ_ID_SEARCH_PAGES = 20000;
 // "189 ball statistikasi" tugmasi qaysi ball bo'yicha hisoblashini belgilaydi
 const KQ_TARGET_SCORE = 189;
 
+// ---------------------------------------------------------------------------
+// Bosh menyudagi "📊 189 ball" — mustaqil, qisqa oqim: fanlar majmuasi -> til
+// -> to'g'ridan-to'g'ri natija (oraliq "rejim tanlash" ekranisiz)
+// ---------------------------------------------------------------------------
+// Foydalanuvchi o'zining fanlar majmuasini qo'lda yozayotganini kutayotgan bo'lsak, shu Set ichida turadi
+const awaiting189CustomSubject = new Set();
+// Fanlar majmuasi tanlangandan (yoki yozilgandan) keyin, til tanlangunga
+// qadar vaqtincha shu yerda saqlanadi (userId -> "Fan1 + Fan2")
+const pending189Subject = new Map();
+// Ta'lim tili tanlash tugmalari callback_data -> { edLangId, label }
+const B189_LANG_LABELS = {
+  b189_lang_1: { edLangId: 1, label: "O'zbekcha" },
+  b189_lang_2: { edLangId: 2, label: 'Русский' },
+  b189_lang_3: { edLangId: 3, label: 'Qoraqalpoq' },
+  b189_lang_4: { edLangId: 4, label: 'Tadjik' },
+  b189_lang_5: { edLangId: 5, label: 'Qozoq' },
+};
+
+function ball189SubjectScreen() {
+  const text =
+    `📊 <b>189 ball statistikasi</b>\n\n` +
+    `Bu bo'lim orqali tanlagan fanlar majmuasi va ta'lim tili bo'yicha ` +
+    `<b>aynan 189 ball</b> va <b>189 balldan yuqori</b> ball to'plagan abituriyentlar sonini bilib olasiz ` +
+    `— bevosita <b>mandat.uzbmb.uz</b> saytidan, jonli hisoblab.\n\n` +
+    `Fanlar majmuangizni tanlang 👇\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosing.</i>`;
+
+  const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
+    btn({ text: subject, callback_data: `b189_subj_${i}`, style: 'primary' }),
+  ]);
+  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'b189_subj_custom', style: 'success' })]);
+  keyboard.push(backRow);
+
+  return { text, keyboard };
+}
+
+function ball189LangScreen(subject) {
+  const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
+
+  const keyboard = [
+    [btn({ text: "O'zbekcha", callback_data: 'b189_lang_1', style: 'primary' })],
+    [btn({ text: 'Русский', callback_data: 'b189_lang_2', style: 'primary' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: 'b189_lang_3', style: 'primary' })],
+    [btn({ text: 'Tadjik', callback_data: 'b189_lang_4', style: 'primary' })],
+    [btn({ text: 'Qozoq', callback_data: 'b189_lang_5', style: 'primary' })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
+async function askFor189Lang(chatId, userId, subject) {
+  pending189Subject.set(userId, subject);
+  const { text, keyboard } = ball189LangScreen(subject);
+  await safeSend(chatId, text, keyboard);
+}
+
 function kengaytirilganSubjectScreen() {
   const text =
     `🔎 <b>Kengaytirilgan qidiruv</b>\n\n` +
@@ -1854,6 +1912,7 @@ const SCREENS = {
   menu_faq: faqScreen,
   menu_yonalish: yonalishSubjectScreen,
   menu_kengaytirilgan: kengaytirilganSubjectScreen,
+  menu_189: ball189SubjectScreen,
   menu_admin_advice: adminAdviceScreen,
 };
 
@@ -2259,6 +2318,35 @@ bot.on('message', async (msg) => {
   }
 
   await askForKQLang(msg.chat.id, userId, subject);
+});
+
+// ---------------------------------------------------------------------------
+// "189 ball" — foydalanuvchi o'zining fanlar majmuasini qo'lda yozganda
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaiting189CustomSubject.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const subject = msg.text.trim();
+  awaiting189CustomSubject.delete(userId);
+
+  if (!subject) {
+    awaiting189CustomSubject.add(userId);
+    try {
+      await bot.sendMessage(msg.chat.id, "❗️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
+    } catch (err) {
+      console.error('189 ball fanlar majmuasi validatsiya xabari xatosi:', err.message);
+    }
+    return;
+  }
+
+  await askFor189Lang(msg.chat.id, userId, subject);
 });
 
 // ---------------------------------------------------------------------------
@@ -2971,6 +3059,122 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "189 ball" — foydalanuvchi ro'yxatdan fanlar majmuasini tanladi
+  if (query.data && query.data.startsWith('b189_subj_') && query.data !== 'b189_subj_custom') {
+    const index = parseInt(query.data.replace('b189_subj_', ''), 10);
+    const subject = MANDAT_SUBJECT_OPTIONS[index];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    if (!subject) return;
+    await askFor189Lang(chatId, userId, subject);
+    return;
+  }
+
+  // "189 ball" — foydalanuvchi o'zi fanlar majmuasini yozmoqchi
+  if (query.data === 'b189_subj_custom') {
+    awaiting189CustomSubject.add(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    try {
+      await bot.sendMessage(
+        chatId,
+        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error("189 ball fanlar majmuasi so'rash xabari xatosi:", err.message);
+    }
+    return;
+  }
+
+  // "189 ball" — ta'lim tili tanlandi -> to'g'ridan-to'g'ri hisoblab natijani ko'rsatamiz
+  if (B189_LANG_LABELS[query.data]) {
+    const { edLangId, label } = B189_LANG_LABELS[query.data];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const subject = pending189Subject.get(userId) || '';
+    pending189Subject.delete(userId);
+
+    const parts = subject.split('+').map((p) => p.trim()).filter(Boolean);
+    if (parts.length !== 2) {
+      try {
+        await bot.sendMessage(
+          chatId,
+          `❗️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
+          { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+        );
+      } catch (err) {
+        console.error('189 ball format xabari xatosi:', err.message);
+      }
+      return;
+    }
+    const [s4subject, s5subject] = parts;
+    const filters = { subject, s4subject, s5subject, edLangId, langLabel: label };
+
+    let thinkingMsgId = null;
+    try {
+      const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      thinkingMsgId = thinkingMsg.message_id;
+    } catch (err) {
+      console.error("189 ball 'hisoblanmoqda' xabari xatosi:", err.message);
+    }
+
+    let stats = null;
+    let fetchErr = null;
+    try {
+      stats = await getKQScoreStats(s4subject, s5subject, edLangId, KQ_TARGET_SCORE);
+    } catch (err) {
+      fetchErr = err;
+      console.error('189 ball statistikasi hisoblashda xatolik:', err.message);
+    }
+
+    if (fetchErr || !stats) {
+      const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      if (thinkingMsgId) {
+        try {
+          await bot.editMessageText(errText, {
+            chat_id: chatId,
+            message_id: thinkingMsgId,
+            reply_markup: { inline_keyboard: [backRow] },
+          });
+        } catch (err) {}
+      } else {
+        await safeSend(chatId, errText, [backRow]);
+      }
+      return;
+    }
+
+    const resultText = formatKQ189Result(filters, stats, KQ_TARGET_SCORE);
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText(resultText, {
+          chat_id: chatId,
+          message_id: thinkingMsgId,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {
+        console.error('189 ball natijasini tahrirlashda xatolik:', err.message);
+      }
+    } else {
+      await safeSend(chatId, resultText, [backRow]);
+    }
+    return;
+  }
+
   // "Kengaytirilgan qidiruv" — ta'lim tili tanlandi -> to'liq ro'yxat yoki ID
   // orqali qidirishni tanlashni so'raymiz
   if (KQ_LANG_LABELS[query.data]) {
@@ -3464,6 +3668,8 @@ bot.on('callback_query', async (query) => {
   pendingKQFilters.delete(userId);
   awaitingKQId.delete(userId);
   kqResultsState.delete(userId);
+  awaiting189CustomSubject.delete(userId);
+  pending189Subject.delete(userId);
 
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
