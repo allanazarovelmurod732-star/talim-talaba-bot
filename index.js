@@ -533,18 +533,19 @@ const STAT_BAND_LABELS = [
   "130 — 150 ball oralig'ida",
   "150 — 170 ball oralig'ida",
   "170 — 189 ball oralig'ida",
+  "Aynan 189 ball to'plaganlar",
+  "189 balldan yuqori to'plaganlar",
 ];
 
 async function getKQBandStats(s4subject, s5subject, edLangId, onProgress) {
   const [totalInfo, ...boundaryResults] = await Promise.all([
     getKQTotalCount(s4subject, s5subject, edLangId, onProgress),
     ...STAT_BOUNDARIES.map((b) => countEntriesWithScoreAtLeast(s4subject, s5subject, edLangId, b, onProgress)),
-    // Oxirgi band (170-189) 189 ballning o'zini ham qamrab olishi uchun,
-    // 189 dan bir oz yuqoridagi chegara bo'yicha ham alohida hisoblanadi
+    // 189 balldan qat'iy YUQORI bo'lganlarni alohida hisoblash uchun (189 ning o'zi bu yerga kirmaydi)
     countEntriesWithScoreAtLeast(s4subject, s5subject, edLangId, 189.001, onProgress),
   ]);
 
-  const above189 = boundaryResults.pop(); // countEntriesWithScoreAtLeast(189.001) natijasi
+  const above189 = boundaryResults.pop(); // countEntriesWithScoreAtLeast(189.001) natijasi -> 189 dan yuqori
   const counts = boundaryResults.map((r) => r.count); // [c(56.7), c(100), c(130), c(150), c(170), c(189)]
   const approx =
     totalInfo.approx || boundaryResults.some((r) => r.approx) || above189.approx;
@@ -555,7 +556,9 @@ async function getKQBandStats(s4subject, s5subject, edLangId, onProgress) {
     Math.max(0, counts[1] - counts[2]), // 100 - 130
     Math.max(0, counts[2] - counts[3]), // 130 - 150
     Math.max(0, counts[3] - counts[4]), // 150 - 170
-    Math.max(0, counts[4] - above189.count), // 170 - 189 (189 ham kiradi)
+    Math.max(0, counts[4] - counts[5]), // 170 - 189 (189 ning o'zi bu bandga kirmaydi)
+    Math.max(0, counts[5] - above189.count), // aynan 189
+    above189.count, // 189 dan yuqori
   ];
 
   return { bands, total: totalInfo.count, approx };
@@ -952,19 +955,20 @@ function renderYonalishResultsPage(userId) {
     const isAdded = tanlovKeys.has(tanlovItemKey(r));
     keyboard.push([
       btn({
-        text: isAdded ? `❌ ${start + i + 1}-ni tanlovdan olib tashlash` : `➕ ${start + i + 1}-ni tanlovga qo'shish`,
+        text: isAdded ? `${start + i + 1}-ni tanlovdan olib tashlash` : `${start + i + 1}-ni tanlovga qo'shish`,
         callback_data: `yon_add_${globalIndex}`,
         style: isAdded ? 'danger' : 'success',
+        icon: isAdded ? EMOJI.crossIcon : EMOJI.plusIcon,
       }),
     ]);
   });
 
   const navRow = [];
-  if (page > 0) navRow.push(btn({ text: '⬅️ Oldingisi', callback_data: 'yon_page_prev', style: 'primary' }));
-  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi ➡️', callback_data: 'yon_page_next', style: 'primary' }));
+  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'yon_page_prev', style: 'primary', icon: EMOJI.backIcon }));
+  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'yon_page_next', style: 'primary', icon: EMOJI.nextIcon }));
   if (navRow.length) keyboard.push(navRow);
 
-  keyboard.push([btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })]);
+  keyboard.push([btn({ text: 'Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary', icon: EMOJI.listIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -1177,8 +1181,41 @@ const EMOJI = {
   phoneIcon: '5318765591014678496',
   giftIcon: '5449800250032143374',
   backIcon: '5411112567609243032',
-  checkIcon: '5206607081334906820',
-  starIcon: '6005661956931850799',
+  homeIcon: '5416041192905265756',
+  checkIcon: '5422641561206793188',
+  starIcon: '5438496463044752972',
+  crossIcon: '5210952531676504517',
+  exclaimIcon: '5440660757194744323',
+  searchIcon: '5017088445353296841',
+  warningIcon: '5447644880824181073',
+  writeIcon: '5429419526406033514',
+  greenIcon: '6334740096293537039',
+  blueIcon: '5449430268664372351',
+  targetIcon: '5436325327011854319',
+  booksIcon: '5357479219335012900',
+  rocketIcon: '5174818074167083884',
+  statsIcon: '5213060385661282374',
+  flagIcon: '5460755126761312667',
+  trophyIcon: '5244590801438138696',
+  schoolIcon: '5233623301800093885',
+  moneyIcon: '5409048419211682843',
+  plusIcon: '5397916757333654639',
+  nextIcon: '5411578137769161708',
+  listIcon: '5197269100878907942',
+  inboxIcon: '5253742260054409879',
+  blockIcon: '5240241223632954241',
+  trashIcon: '5231339530249845638',
+  prayIcon: '5458603043203327669',
+  chartIcon: '5244837092042750681',
+  globeIcon: '5447410659077661506',
+  bulletIcon: '5294243213245178729',
+  usersIcon: '5319106456799158575',
+  idIcon: '6323600780783781848',
+  buildingIcon: '5321172885824347698',
+  pointDownIcon: '5231102735817918643',
+  questionIcon: '5314504236132747481',
+  gradIcon: '5472411062412254753',
+  appIcon: '5427168083074628963',
 };
 
 // ---------------------------------------------------------------------------
@@ -1215,7 +1252,7 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
   return button;
 }
 
-const backRow = [btn({ text: 'Orqaga', callback_data: 'menu_back', icon: EMOJI.backIcon, style: 'danger' })];
+const backRow = [btn({ text: 'Orqaga', callback_data: 'menu_back', icon: EMOJI.homeIcon, style: 'danger' })];
 // Ta'lim kanalimiz / Test Platformamiz / Founder / FAQ / Botni baholang endi
 // "Biz haqimizda" submenyusi ichida bo'lgani uchun, ularning "Orqaga" tugmasi
 // to'g'ridan-to'g'ri asosiy menyuga emas, shu submenyuga qaytaradi
@@ -1292,7 +1329,7 @@ function gateScreen() {
       style: i === 0 ? 'primary' : 'danger',
     }),
   ]);
-  keyboard.push([btn({ text: "✅ Tekshirish", callback_data: 'check_subscription', style: 'success' })]);
+  keyboard.push([btn({ text: "Tekshirish", callback_data: 'check_subscription', style: 'success', icon: EMOJI.checkIcon })]);
 
   return { text, keyboard };
 }
@@ -1307,18 +1344,18 @@ function mainMenuScreen() {
     `<i>Quyidagi bo'limlardan birini tanlang yoki savol yozing</i> 👇`;
 
   const keyboard = [
-    [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
-    [btn({ text: '🔎 Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger' })],
-    [btn({ text: '📊 189 ball', callback_data: 'menu_189', style: 'primary' })],
-    [btn({ text: '📊 Statistika super', callback_data: 'menu_statistika', style: 'danger' })],
-    [btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })],
-    [btn({ text: "🆔 Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger' })],
-    [btn({ text: '🏢 Biz haqimizda', callback_data: 'menu_about', style: 'success' })],
+    [btn({ text: 'Mandat tanlash', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.targetIcon })],
+    [btn({ text: 'Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger', icon: EMOJI.searchIcon })],
+    [btn({ text: '189 ball', callback_data: 'menu_189', style: 'primary', icon: EMOJI.statsIcon })],
+    [btn({ text: 'Statistika super', callback_data: 'menu_statistika', style: 'danger', icon: EMOJI.statsIcon })],
+    [btn({ text: 'Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary', icon: EMOJI.listIcon })],
+    [btn({ text: "Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger', icon: EMOJI.idIcon })],
+    [btn({ text: 'Biz haqimizda', callback_data: 'menu_about', style: 'success', icon: EMOJI.buildingIcon })],
   ];
 
   if (MINI_APP_URL) {
     keyboard.push([
-      btn({ text: 'Qulay ilova', web_app: { url: MINI_APP_URL }, style: 'primary' }),
+      btn({ text: 'Qulay ilova', web_app: { url: MINI_APP_URL }, style: 'primary', icon: EMOJI.appIcon }),
     ]);
   }
 
@@ -1338,7 +1375,7 @@ function aboutScreen() {
     [btn({ text: "Ta'lim kanalimiz", callback_data: 'menu_channel', icon: EMOJI.channelMenuIcon, style: 'primary' })],
     [btn({ text: 'Test Platformamiz', callback_data: 'menu_test', icon: EMOJI.testMenuIcon, style: 'success' })],
     [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
-    [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
+    [btn({ text: 'Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary', icon: EMOJI.questionIcon })],
     [btn({ text: 'Botni baholang', callback_data: 'menu_baho', icon: EMOJI.starIcon, style: 'success' })],
     backRow,
   ];
@@ -1465,7 +1502,7 @@ function tanlovScreen(userId) {
       `<b>"🎯 Mandat tanlash"</b> bo'limida qidiruv qiling va yoqqan yo'nalishlar tagidagi <b>"➕ Tanlovga qo'shish"</b> ` +
       `tugmasini bosing.`;
     const keyboard = [
-      [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
+      [btn({ text: 'Mandat tanlash', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.targetIcon })],
       backRow,
     ];
     return { text, keyboard };
@@ -1478,10 +1515,10 @@ function tanlovScreen(userId) {
   const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
 
   const keyboard = list.map((item, i) => [
-    btn({ text: `❌ ${i + 1}-ni o'chirish`, callback_data: `tanlov_remove_${i}`, style: 'danger' }),
+    btn({ text: `${i + 1}-ni o'chirish`, callback_data: `tanlov_remove_${i}`, style: 'danger', icon: EMOJI.crossIcon }),
   ]);
   if (list.length < TANLOV_MAX) {
-    keyboard.push([btn({ text: '➕ Yana yo\'nalish qo\'shish', callback_data: 'menu_yonalish', style: 'success' })]);
+    keyboard.push([btn({ text: 'Yana yo\'nalish qo\'shish', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.plusIcon })]);
   }
   keyboard.push(backRow);
 
@@ -1526,7 +1563,7 @@ function ratingScreen(userId) {
   }
 
   if (selected) {
-    keyboard.push([btn({ text: '✅ Yuborish', callback_data: 'baho_submit', style: 'success' })]);
+    keyboard.push([btn({ text: 'Yuborish', callback_data: 'baho_submit', style: 'success', icon: EMOJI.checkIcon })]);
   }
   keyboard.push(backToAboutRow);
 
@@ -1675,7 +1712,7 @@ function ball189SubjectScreen() {
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
     btn({ text: subject, callback_data: `b189_subj_${i}`, style: 'primary' }),
   ]);
-  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'b189_subj_custom', style: 'success' })]);
+  keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'b189_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -1685,11 +1722,11 @@ function ball189LangScreen(subject) {
   const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
 
   const keyboard = [
-    [btn({ text: "O'zbekcha", callback_data: 'b189_lang_1', style: 'primary' })],
-    [btn({ text: 'Русский', callback_data: 'b189_lang_2', style: 'primary' })],
-    [btn({ text: 'Qoraqalpoq', callback_data: 'b189_lang_3', style: 'primary' })],
-    [btn({ text: 'Tadjik', callback_data: 'b189_lang_4', style: 'primary' })],
-    [btn({ text: 'Qozoq', callback_data: 'b189_lang_5', style: 'primary' })],
+    [btn({ text: "O'zbekcha", callback_data: 'b189_lang_1', style: 'primary', icon: '5271648932194195260' })],
+    [btn({ text: 'Русский', callback_data: 'b189_lang_2', style: 'primary', icon: '5305587746587300980' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: 'b189_lang_3', style: 'primary', icon: '5364282834078939253' })],
+    [btn({ text: 'Tadjik', callback_data: 'b189_lang_4', style: 'primary', icon: '5244570589322039598' })],
+    [btn({ text: 'Qozoq', callback_data: 'b189_lang_5', style: 'primary', icon: '5244446228543983332' })],
     backRow,
   ];
 
@@ -1732,7 +1769,7 @@ function statistikaSubjectScreen() {
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
     btn({ text: subject, callback_data: `stat_subj_${i}`, style: 'primary' }),
   ]);
-  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'stat_subj_custom', style: 'success' })]);
+  keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'stat_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -1742,11 +1779,11 @@ function statistikaLangScreen(subject) {
   const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
 
   const keyboard = [
-    [btn({ text: "O'zbekcha", callback_data: 'stat_lang_1', style: 'primary' })],
-    [btn({ text: 'Русский', callback_data: 'stat_lang_2', style: 'primary' })],
-    [btn({ text: 'Qoraqalpoq', callback_data: 'stat_lang_3', style: 'primary' })],
-    [btn({ text: 'Tadjik', callback_data: 'stat_lang_4', style: 'primary' })],
-    [btn({ text: 'Qozoq', callback_data: 'stat_lang_5', style: 'primary' })],
+    [btn({ text: "O'zbekcha", callback_data: 'stat_lang_1', style: 'primary', icon: '5271648932194195260' })],
+    [btn({ text: 'Русский', callback_data: 'stat_lang_2', style: 'primary', icon: '5305587746587300980' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: 'stat_lang_3', style: 'primary', icon: '5364282834078939253' })],
+    [btn({ text: 'Tadjik', callback_data: 'stat_lang_4', style: 'primary', icon: '5244570589322039598' })],
+    [btn({ text: 'Qozoq', callback_data: 'stat_lang_5', style: 'primary', icon: '5244446228543983332' })],
     backRow,
   ];
 
@@ -1789,7 +1826,7 @@ function kengaytirilganSubjectScreen() {
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
     btn({ text: subject, callback_data: `kq_subj_${i}`, style: 'primary' }),
   ]);
-  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'kq_subj_custom', style: 'success' })]);
+  keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'kq_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -1799,11 +1836,11 @@ function kengaytirilganLangScreen(subject) {
   const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
 
   const keyboard = [
-    [btn({ text: "O'zbekcha", callback_data: 'kq_lang_1', style: 'primary' })],
-    [btn({ text: 'Русский', callback_data: 'kq_lang_2', style: 'primary' })],
-    [btn({ text: 'Qoraqalpoq', callback_data: 'kq_lang_3', style: 'primary' })],
-    [btn({ text: 'Tadjik', callback_data: 'kq_lang_4', style: 'primary' })],
-    [btn({ text: 'Qozoq', callback_data: 'kq_lang_5', style: 'primary' })],
+    [btn({ text: "O'zbekcha", callback_data: 'kq_lang_1', style: 'primary', icon: '5271648932194195260' })],
+    [btn({ text: 'Русский', callback_data: 'kq_lang_2', style: 'primary', icon: '5305587746587300980' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: 'kq_lang_3', style: 'primary', icon: '5364282834078939253' })],
+    [btn({ text: 'Tadjik', callback_data: 'kq_lang_4', style: 'primary', icon: '5244570589322039598' })],
+    [btn({ text: 'Qozoq', callback_data: 'kq_lang_5', style: 'primary', icon: '5244446228543983332' })],
     backRow,
   ];
 
@@ -1825,9 +1862,9 @@ function kengaytirilganModeScreen(subject, langLabel) {
     `Qanday ko'rmoqchisiz? 👇`;
 
   const keyboard = [
-    [btn({ text: "📋 To'liq ro'yxatni ko'rish", callback_data: 'kq_mode_list', style: 'primary' })],
-    [btn({ text: "🆔 ID orqali o'rnimni topish", callback_data: 'kq_mode_id', style: 'success' })],
-    [btn({ text: '📊 189 ball statistikasi', callback_data: 'kq_mode_189', style: 'danger' })],
+    [btn({ text: "To'liq ro'yxatni ko'rish", callback_data: 'kq_mode_list', style: 'primary', icon: EMOJI.listIcon })],
+    [btn({ text: "ID orqali o'rnimni topish", callback_data: 'kq_mode_id', style: 'success', icon: EMOJI.idIcon })],
+    [btn({ text: '189 ball statistikasi', callback_data: 'kq_mode_189', style: 'danger', icon: EMOJI.statsIcon })],
     backRow,
   ];
 
@@ -1936,8 +1973,8 @@ function renderKQPage(userId) {
 
   const keyboard = [];
   const navRow = [];
-  if (page > 1) navRow.push(btn({ text: '⬅️ Oldingisi', callback_data: 'kq_page_prev', style: 'primary' }));
-  if (state.hasNext) navRow.push(btn({ text: 'Keyingisi ➡️', callback_data: 'kq_page_next', style: 'primary' }));
+  if (page > 1) navRow.push(btn({ text: 'Oldingisi', callback_data: 'kq_page_prev', style: 'primary', icon: EMOJI.backIcon }));
+  if (state.hasNext) navRow.push(btn({ text: 'Keyingisi', callback_data: 'kq_page_next', style: 'primary', icon: EMOJI.nextIcon }));
   if (navRow.length) keyboard.push(navRow);
   keyboard.push(backRow);
 
@@ -1951,9 +1988,9 @@ function yonalishSubjectScreen() {
     `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosib, o'zingiz yozishingiz mumkin.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
-    btn({ text: subject, callback_data: `yon_subj_${i}`, style: 'primary' }),
+    btn({ text: subject, callback_data: `yon_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
-  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'yon_subj_custom', style: 'success' })]);
+  keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'yon_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
   keyboard.push(backRow);
 
   return { text, keyboard };
@@ -2011,8 +2048,8 @@ function yonalishQabulTuriScreen() {
     `<i>Faqat grant, faqat kontrakt yoki ikkalasini birga ko'rishingiz mumkin.</i>`;
 
   const keyboard = [
-    [btn({ text: '🟢 Faqat Grant', callback_data: 'yon_qabul_grant', style: 'success' })],
-    [btn({ text: '🔵 Faqat Kontrakt', callback_data: 'yon_qabul_kontrakt', style: 'primary' })],
+    [btn({ text: 'Faqat Grant', callback_data: 'yon_qabul_grant', style: 'success', icon: '5274156304036800055' })],
+    [btn({ text: 'Faqat Kontrakt', callback_data: 'yon_qabul_kontrakt', style: 'primary', icon: '5274156304036800055' })],
     [btn({ text: '🟢🔵 Grant + Kontrakt', callback_data: 'yon_qabul_both', style: 'danger' })],
     backRow,
   ];
@@ -2249,8 +2286,8 @@ bot.onText(/^\/xabar/, async (msg) => {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '✅ Ha, yubor', callback_data: 'broadcast_confirm' },
-              { text: '❌ Bekor qilish', callback_data: 'broadcast_cancel' },
+              { text: 'Ha, yubor', callback_data: 'broadcast_confirm', icon_custom_emoji_id: EMOJI.checkIcon },
+              { text: 'Bekor qilish', callback_data: 'broadcast_cancel', icon_custom_emoji_id: EMOJI.crossIcon },
             ],
           ],
         },
@@ -2306,7 +2343,7 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
         text: 'Qulay ilova',
         web_app: { url: MINI_APP_URL },
         style: 'success',
-        icon_custom_emoji_id: '5443038326535759644',
+        icon_custom_emoji_id: EMOJI.appIcon,
       },
     ]);
   }
@@ -2322,7 +2359,7 @@ bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
     await bot.sendMessage(
       msg.chat.id,
       MINI_APP_URL
-        ? `${emoji('5443038326535759644', '🟢')} Fikr-mulohaza yuborish yoki "Admin 24/7" orqali yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi tugmalardan foydalaning:`
+        ? `${emoji(EMOJI.greenIcon, '🟢')} Fikr-mulohaza yuborish yoki "Admin 24/7" orqali yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi tugmalardan foydalaning:`
         : `${emoji(EMOJI.giftIcon, '🟢')} Yo'nalish tanlash bo'yicha maslahat olish uchun pastdagi "Admin 24/7" tugmasidan foydalaning:`,
       {
         parse_mode: 'HTML',
