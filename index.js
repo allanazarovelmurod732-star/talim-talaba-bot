@@ -519,6 +519,48 @@ async function getKQScoreStats(s4subject, s5subject, edLangId, targetScore, onPr
   };
 }
 
+// ---------------------------------------------------------------------------
+// "Statistika super" — tanlangan fanlar majmuasi + til bo'yicha, butun ro'yxatni
+// bir nechta ball oralig'iga (bandlarga) bo'lib, har birida nechta abituriyent
+// borligini hisoblaydi. countEntriesWithScoreAtLeast'dan foydalanib, har bir
+// chegara uchun alohida-alohida (parallel) binary search qilinadi.
+// ---------------------------------------------------------------------------
+const STAT_BOUNDARIES = [56.7, 100, 130, 150, 170, 189];
+const STAT_BAND_LABELS = [
+  "56.7 balldan o'ta olmaganlar",
+  "56.7 — 100 ball oralig'ida",
+  "100 — 130 ball oralig'ida",
+  "130 — 150 ball oralig'ida",
+  "150 — 170 ball oralig'ida",
+  "170 — 189 ball oralig'ida",
+];
+
+async function getKQBandStats(s4subject, s5subject, edLangId, onProgress) {
+  const [totalInfo, ...boundaryResults] = await Promise.all([
+    getKQTotalCount(s4subject, s5subject, edLangId, onProgress),
+    ...STAT_BOUNDARIES.map((b) => countEntriesWithScoreAtLeast(s4subject, s5subject, edLangId, b, onProgress)),
+    // Oxirgi band (170-189) 189 ballning o'zini ham qamrab olishi uchun,
+    // 189 dan bir oz yuqoridagi chegara bo'yicha ham alohida hisoblanadi
+    countEntriesWithScoreAtLeast(s4subject, s5subject, edLangId, 189.001, onProgress),
+  ]);
+
+  const above189 = boundaryResults.pop(); // countEntriesWithScoreAtLeast(189.001) natijasi
+  const counts = boundaryResults.map((r) => r.count); // [c(56.7), c(100), c(130), c(150), c(170), c(189)]
+  const approx =
+    totalInfo.approx || boundaryResults.some((r) => r.approx) || above189.approx;
+
+  const bands = [
+    Math.max(0, totalInfo.count - counts[0]), // < 56.7
+    Math.max(0, counts[0] - counts[1]), // 56.7 - 100
+    Math.max(0, counts[1] - counts[2]), // 100 - 130
+    Math.max(0, counts[2] - counts[3]), // 130 - 150
+    Math.max(0, counts[3] - counts[4]), // 150 - 170
+    Math.max(0, counts[4] - above189.count), // 170 - 189 (189 ham kiradi)
+  ];
+
+  return { bands, total: totalInfo.count, approx };
+}
+
 // ID orqali topilgan abituriyentning shu fanlar majmuasi + til bo'yicha
 // nechanchi o'rinda ekanini va ro'yxat jamisini aniqlashga urinadi
 // (majburiy ma'lumot yetarli bo'lmasa yoki xatolik bo'lsa, jimgina null qaytaradi)
@@ -1268,6 +1310,7 @@ function mainMenuScreen() {
     [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
     [btn({ text: '🔎 Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger' })],
     [btn({ text: '📊 189 ball', callback_data: 'menu_189', style: 'primary' })],
+    [btn({ text: '📊 Statistika super', callback_data: 'menu_statistika', style: 'danger' })],
     [btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })],
     [btn({ text: "🆔 Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger' })],
     [btn({ text: '🏢 Biz haqimizda', callback_data: 'menu_about', style: 'success' })],
@@ -1659,6 +1702,81 @@ async function askFor189Lang(chatId, userId, subject) {
   await safeSend(chatId, text, keyboard);
 }
 
+// ---------------------------------------------------------------------------
+// Bosh menyudagi "📊 Statistika super" — mustaqil, qisqa oqim: fanlar majmuasi
+// -> til -> to'g'ridan-to'g'ri natija (ball oraliqlari bo'yicha statistika)
+// ---------------------------------------------------------------------------
+// Foydalanuvchi o'zining fanlar majmuasini qo'lda yozayotganini kutayotgan bo'lsak, shu Set ichida turadi
+const awaitingStatCustomSubject = new Set();
+// Fanlar majmuasi tanlangandan (yoki yozilgandan) keyin, til tanlangunga
+// qadar vaqtincha shu yerda saqlanadi (userId -> "Fan1 + Fan2")
+const pendingStatSubject = new Map();
+// Ta'lim tili tanlash tugmalari callback_data -> { edLangId, label }
+const STAT_LANG_LABELS = {
+  stat_lang_1: { edLangId: 1, label: "O'zbekcha" },
+  stat_lang_2: { edLangId: 2, label: 'Русский' },
+  stat_lang_3: { edLangId: 3, label: 'Qoraqalpoq' },
+  stat_lang_4: { edLangId: 4, label: 'Tadjik' },
+  stat_lang_5: { edLangId: 5, label: 'Qozoq' },
+};
+
+function statistikaSubjectScreen() {
+  const text =
+    `📊 <b>Statistika super</b>\n\n` +
+    `Bu bo'lim orqali tanlagan fanlar majmuasi va ta'lim tili bo'yicha ` +
+    `abituriyentlarning <b>ball oraliqlari bo'yicha taqsimotini</b> bilib olasiz ` +
+    `— bevosita <b>mandat.uzbmb.uz</b> saytidan, jonli hisoblab.\n\n` +
+    `Fanlar majmuangizni tanlang 👇\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "✍️ O'zim yozaman" tugmasini bosing.</i>`;
+
+  const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
+    btn({ text: subject, callback_data: `stat_subj_${i}`, style: 'primary' }),
+  ]);
+  keyboard.push([btn({ text: "✍️ O'zim yozaman", callback_data: 'stat_subj_custom', style: 'success' })]);
+  keyboard.push(backRow);
+
+  return { text, keyboard };
+}
+
+function statistikaLangScreen(subject) {
+  const text = `✅ Fanlar majmuasi: <b>${subject}</b>\n\n🌐 Ta'lim tilini tanlang 👇`;
+
+  const keyboard = [
+    [btn({ text: "O'zbekcha", callback_data: 'stat_lang_1', style: 'primary' })],
+    [btn({ text: 'Русский', callback_data: 'stat_lang_2', style: 'primary' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: 'stat_lang_3', style: 'primary' })],
+    [btn({ text: 'Tadjik', callback_data: 'stat_lang_4', style: 'primary' })],
+    [btn({ text: 'Qozoq', callback_data: 'stat_lang_5', style: 'primary' })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
+async function askForStatLang(chatId, userId, subject) {
+  pendingStatSubject.set(userId, subject);
+  const { text, keyboard } = statistikaLangScreen(subject);
+  await safeSend(chatId, text, keyboard);
+}
+
+// "Statistika super" natijasini matn ko'rinishida tayyorlaydi
+function formatStatResult(filters, bandStats) {
+  const approxNote = bandStats.approx
+    ? `\n\n<i>⚠️ Ro'yxat juda katta bo'lgani uchun natija taxminiy (yaqin son).</i>`
+    : '';
+
+  const lines = STAT_BAND_LABELS.map((label, i) => `▫️ ${label}: <b>${bandStats.bands[i]}</b> ta`).join('\n');
+
+  return (
+    `📊 <b>Statistika super</b>\n\n` +
+    `📚 Fanlar majmuasi: <b>${filters.subject}</b>\n` +
+    `🌐 Ta'lim tili: <b>${filters.langLabel}</b>\n\n` +
+    `${lines}\n\n` +
+    `👥 Jami: <b>${bandStats.total}</b> ta` +
+    approxNote
+  );
+}
+
 function kengaytirilganSubjectScreen() {
   const text =
     `🔎 <b>Kengaytirilgan qidiruv</b>\n\n` +
@@ -1935,6 +2053,7 @@ const SCREENS = {
   menu_yonalish: yonalishSubjectScreen,
   menu_kengaytirilgan: kengaytirilganSubjectScreen,
   menu_189: ball189SubjectScreen,
+  menu_statistika: statistikaSubjectScreen,
   menu_admin_advice: adminAdviceScreen,
 };
 
@@ -2369,6 +2488,35 @@ bot.on('message', async (msg) => {
   }
 
   await askFor189Lang(msg.chat.id, userId, subject);
+});
+
+// ---------------------------------------------------------------------------
+// "Statistika super" — foydalanuvchi o'zining fanlar majmuasini qo'lda yozganda
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaitingStatCustomSubject.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const subject = msg.text.trim();
+  awaitingStatCustomSubject.delete(userId);
+
+  if (!subject) {
+    awaitingStatCustomSubject.add(userId);
+    try {
+      await bot.sendMessage(msg.chat.id, "❗️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
+    } catch (err) {
+      console.error('Statistika fanlar majmuasi validatsiya xabari xatosi:', err.message);
+    }
+    return;
+  }
+
+  await askForStatLang(msg.chat.id, userId, subject);
 });
 
 // ---------------------------------------------------------------------------
@@ -3197,6 +3345,122 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "Statistika super" — foydalanuvchi ro'yxatdan fanlar majmuasini tanladi
+  if (query.data && query.data.startsWith('stat_subj_') && query.data !== 'stat_subj_custom') {
+    const index = parseInt(query.data.replace('stat_subj_', ''), 10);
+    const subject = MANDAT_SUBJECT_OPTIONS[index];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    if (!subject) return;
+    await askForStatLang(chatId, userId, subject);
+    return;
+  }
+
+  // "Statistika super" — foydalanuvchi o'zi fanlar majmuasini yozmoqchi
+  if (query.data === 'stat_subj_custom') {
+    awaitingStatCustomSubject.add(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    try {
+      await bot.sendMessage(
+        chatId,
+        "✍️ Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error("Statistika fanlar majmuasi so'rash xabari xatosi:", err.message);
+    }
+    return;
+  }
+
+  // "Statistika super" — ta'lim tili tanlandi -> to'g'ridan-to'g'ri hisoblab natijani ko'rsatamiz
+  if (STAT_LANG_LABELS[query.data]) {
+    const { edLangId, label } = STAT_LANG_LABELS[query.data];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const subject = pendingStatSubject.get(userId) || '';
+    pendingStatSubject.delete(userId);
+
+    const parts = subject.split('+').map((p) => p.trim()).filter(Boolean);
+    if (parts.length !== 2) {
+      try {
+        await bot.sendMessage(
+          chatId,
+          `❗️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
+          { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+        );
+      } catch (err) {
+        console.error('Statistika format xabari xatosi:', err.message);
+      }
+      return;
+    }
+    const [s4subject, s5subject] = parts;
+    const filters = { subject, s4subject, s5subject, edLangId, langLabel: label };
+
+    let thinkingMsgId = null;
+    try {
+      const thinkingMsg = await bot.sendMessage(chatId, '🔎 mandat.uzbmb.uz saytidan hisoblanmoqda...');
+      thinkingMsgId = thinkingMsg.message_id;
+    } catch (err) {
+      console.error("Statistika 'hisoblanmoqda' xabari xatosi:", err.message);
+    }
+
+    let bandStats = null;
+    let fetchErr = null;
+    try {
+      bandStats = await getKQBandStats(s4subject, s5subject, edLangId);
+    } catch (err) {
+      fetchErr = err;
+      console.error('Statistika hisoblashda xatolik:', err.message);
+    }
+
+    if (fetchErr || !bandStats) {
+      const errText = "❌ mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      if (thinkingMsgId) {
+        try {
+          await bot.editMessageText(errText, {
+            chat_id: chatId,
+            message_id: thinkingMsgId,
+            reply_markup: { inline_keyboard: [backRow] },
+          });
+        } catch (err) {}
+      } else {
+        await safeSend(chatId, errText, [backRow]);
+      }
+      return;
+    }
+
+    const resultText = formatStatResult(filters, bandStats);
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText(resultText, {
+          chat_id: chatId,
+          message_id: thinkingMsgId,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {
+        console.error('Statistika natijasini tahrirlashda xatolik:', err.message);
+      }
+    } else {
+      await safeSend(chatId, resultText, [backRow]);
+    }
+    return;
+  }
+
   // "Kengaytirilgan qidiruv" — ta'lim tili tanlandi -> to'liq ro'yxat yoki ID
   // orqali qidirishni tanlashni so'raymiz
   if (KQ_LANG_LABELS[query.data]) {
@@ -3692,6 +3956,8 @@ bot.on('callback_query', async (query) => {
   kqResultsState.delete(userId);
   awaiting189CustomSubject.delete(userId);
   pending189Subject.delete(userId);
+  awaitingStatCustomSubject.delete(userId);
+  pendingStatSubject.delete(userId);
 
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
