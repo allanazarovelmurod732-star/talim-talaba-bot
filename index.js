@@ -1216,6 +1216,8 @@ const EMOJI = {
   questionIcon: '5314504236132747481',
   gradIcon: '5472411062412254753',
   appIcon: '5427168083074628963',
+  medalIcon: '5204271353565300127',
+  personIcon: '5233497025466620701',
 };
 
 // ---------------------------------------------------------------------------
@@ -1263,7 +1265,7 @@ const backToAboutRow = [btn({ text: 'Orqaga', callback_data: 'menu_about', icon:
 // (AI ga yuborilmaydi — to'g'ridan-to'g'ri shu matn qaytariladi)
 // ---------------------------------------------------------------------------
 const CREATOR_ANSWER_HTML =
-  `👤 Meni <b>Elmurod Allanazarov</b> yaratgan.\n\n` +
+  `${emoji(EMOJI.personIcon, '👤')} Meni <b>Elmurod Allanazarov</b> yaratgan.\n\n` +
   `U <i>2007-yilda</i> Qashqadaryo viloyati, Kasbi tumanida tug'ilgan va hozirda <b>TATU</b> talabasi. ` +
   `Hozirda u <b>Elite Test</b> platformasining asoschisi — platforma <b>Google Play</b> va <b>Microsoft Store</b>ga rasman joylangan.\n\n` +
   `📞 <b>Bog'lanish uchun:</b>\n` +
@@ -1419,7 +1421,7 @@ function testScreen() {
 
 function founderScreen() {
   const text =
-    `👤 <b>Elmurod Allanazarov</b>\n\n` +
+    `${emoji(EMOJI.personIcon, '👤')} <b>Elmurod Allanazarov</b>\n\n` +
     `Mana shu botimiz <b>asoschisi va dasturchisi</b> (developeri). U <i>2007-yil 17-noyabrda</i> Qashqadaryo viloyati, Kasbi tumanida tug'ilgan.\n\n` +
     `${emoji(EMOJI.receptionIcon, '📅')} <b>Qabul vaqti:</b>\n` +
     `Dushanba – Shanba\n` +
@@ -1922,7 +1924,7 @@ async function fetchKQEntrantLinearScan(s4subject, s5subject, edLangId, entrantI
 
 
 function formatKQCardLine(card, rank) {
-  let line = `🏅 <b>${rank}-o'rin</b>\n👤 <b>${card.name}</b>\n<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> ID: <b>${card.id}</b>\n`;
+  let line = `${emoji(EMOJI.medalIcon, '🏅')} <b>${rank}-o'rin</b>\n${emoji(EMOJI.personIcon, '👤')} <b>${card.name}</b>\n<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> ID: <b>${card.id}</b>\n`;
   if (card.scoreText) line += `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> Ball: <b>${card.scoreText}</b>\n`;
   if (card.thresholdText) line += `<tg-emoji emoji-id=\"5460755126761312667\">🚩</tg-emoji> ${card.thresholdText}\n`;
   return line.trim();
@@ -1937,9 +1939,9 @@ function formatKQIdFoundResult(card, rank, filters, subjects, totalInfo) {
 
   let text =
     `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> <b>#${card.id} topildi — ${rank}-o'rinda!</b>\n\n` +
-    `👤 <b>${card.name}</b>\n` +
+    `${emoji(EMOJI.personIcon, '👤')} <b>${card.name}</b>\n` +
     `🔢 ID: <b>${card.id}</b>\n` +
-    `🏅 O'rni: <b>${rank}</b>${totalLine}\n` +
+    `${emoji(EMOJI.medalIcon, '🏅')} O'rni: <b>${rank}</b>${totalLine}\n` +
     (card.scoreText ? `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> To'plangan ball: <b>${card.scoreText}</b>\n` : '') +
     (card.thresholdText ? `<tg-emoji emoji-id=\"5460755126761312667\">🚩</tg-emoji> ${card.thresholdText}\n` : '') +
     `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> Fanlar majmuasi: <b>${filters.subject}</b>\n` +
@@ -2411,7 +2413,7 @@ bot.on('message', async (msg) => {
       try {
         const sentToAdmin = await bot.sendMessage(
           ADMIN_CHAT_ID,
-          `📩 <b>Yangi fikr-mulohaza</b>\n\n👤 ${fromLabel}\n\n${payload.text}\n\n` +
+          `📩 <b>Yangi fikr-mulohaza</b>\n\n${emoji(EMOJI.personIcon, '👤')} ${fromLabel}\n\n${payload.text}\n\n` +
             `<i>Javob berish uchun shu xabarga "Reply" qiling — javobingiz avtomatik shu foydalanuvchiga yetkaziladi.</i>\n` +
             `<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> <code>${msg.chat.id}</code>`,
           { parse_mode: 'HTML' }
