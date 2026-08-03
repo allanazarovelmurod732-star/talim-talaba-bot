@@ -1710,7 +1710,7 @@ function ball189SubjectScreen() {
     `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosing.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
-    btn({ text: subject, callback_data: `b189_subj_${i}`, style: 'primary' }),
+    btn({ text: subject, callback_data: `b189_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
   keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'b189_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
   keyboard.push(backRow);
@@ -1727,6 +1727,7 @@ function ball189LangScreen(subject) {
     [btn({ text: 'Qoraqalpoq', callback_data: 'b189_lang_3', style: 'primary', icon: '5364282834078939253' })],
     [btn({ text: 'Tadjik', callback_data: 'b189_lang_4', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Qozoq', callback_data: 'b189_lang_5', style: 'primary', icon: '5244446228543983332' })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_189', style: 'primary', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -1767,7 +1768,7 @@ function statistikaSubjectScreen() {
     `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosing.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
-    btn({ text: subject, callback_data: `stat_subj_${i}`, style: 'primary' }),
+    btn({ text: subject, callback_data: `stat_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
   keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'stat_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
   keyboard.push(backRow);
@@ -1784,6 +1785,7 @@ function statistikaLangScreen(subject) {
     [btn({ text: 'Qoraqalpoq', callback_data: 'stat_lang_3', style: 'primary', icon: '5364282834078939253' })],
     [btn({ text: 'Tadjik', callback_data: 'stat_lang_4', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Qozoq', callback_data: 'stat_lang_5', style: 'primary', icon: '5244446228543983332' })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_statistika', style: 'primary', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -1824,7 +1826,7 @@ function kengaytirilganSubjectScreen() {
     `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosing.</i>`;
 
   const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
-    btn({ text: subject, callback_data: `kq_subj_${i}`, style: 'primary' }),
+    btn({ text: subject, callback_data: `kq_subj_${i}`, style: 'primary', icon: '5373177964752019815' }),
   ]);
   keyboard.push([btn({ text: "O'zim yozaman", callback_data: 'kq_subj_custom', style: 'success', icon: EMOJI.writeIcon })]);
   keyboard.push(backRow);
@@ -1841,6 +1843,7 @@ function kengaytirilganLangScreen(subject) {
     [btn({ text: 'Qoraqalpoq', callback_data: 'kq_lang_3', style: 'primary', icon: '5364282834078939253' })],
     [btn({ text: 'Tadjik', callback_data: 'kq_lang_4', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Qozoq', callback_data: 'kq_lang_5', style: 'primary', icon: '5244446228543983332' })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_kengaytirilgan', style: 'primary', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -2010,6 +2013,7 @@ function yonalishTilScreen(subject) {
     [btn({ text: "Qirg'iz", callback_data: 'yon_til_kg', style: 'primary', icon: '6323615997852910673' })],
     [btn({ text: 'Tojik', callback_data: 'yon_til_tj', style: 'primary', icon: '5244570589322039598' })],
     [btn({ text: 'Turkman', callback_data: 'yon_til_tk', style: 'primary', icon: '5431468139906901536' })],
+    [btn({ text: 'Orqaga', callback_data: 'menu_yonalish', style: 'primary', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -2029,6 +2033,7 @@ function yonalishShaklScreen() {
   const keyboard = [
     [btn({ text: 'Kunduzgi', callback_data: 'yon_shakl_kunduzgi', style: 'primary' })],
     [btn({ text: 'Masofaviy', callback_data: 'yon_shakl_masofaviy', style: 'success' })],
+    [btn({ text: 'Orqaga', callback_data: 'yon_back_til', style: 'primary', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -2051,6 +2056,7 @@ function yonalishQabulTuriScreen() {
     [btn({ text: 'Faqat Grant', callback_data: 'yon_qabul_grant', style: 'success', icon: '5274156304036800055' })],
     [btn({ text: 'Faqat Kontrakt', callback_data: 'yon_qabul_kontrakt', style: 'primary', icon: '5274156304036800055' })],
     [btn({ text: '🟢🔵 Grant + Kontrakt', callback_data: 'yon_qabul_both', style: 'danger' })],
+    [btn({ text: 'Orqaga', callback_data: 'yon_back_shakl', style: 'primary', icon: EMOJI.backIcon })],
     backRow,
   ];
 
@@ -3120,6 +3126,36 @@ bot.on('callback_query', async (query) => {
     } catch (err) {
       console.error("Yo'nalish fanlar majmuasi so'rash xabari xatosi:", err.message);
     }
+    return;
+  }
+
+  // "Mandat tanlash" — til ekranidan "Orqaga": shakl ekranidan qaytib, qayta til tanlash
+  if (query.data === 'yon_back_til') {
+    const subject = pendingYonalishSubject.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    if (!subject) {
+      const { text, keyboard } = yonalishSubjectScreen();
+      await sendMandatScreen(chatId, text, keyboard);
+      return;
+    }
+    await askForYonalishTil(chatId, userId, subject);
+    return;
+  }
+
+  // "Mandat tanlash" — qabul turi ekranidan "Orqaga": shakl ekraniga qaytish
+  if (query.data === 'yon_back_shakl') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    await askForYonalishShakl(chatId, userId);
     return;
   }
 
