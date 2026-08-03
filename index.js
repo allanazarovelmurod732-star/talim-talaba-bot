@@ -1174,6 +1174,10 @@ function btn({ text, callback_data, url, web_app, style, icon }) {
 }
 
 const backRow = [btn({ text: 'Orqaga', callback_data: 'menu_back', icon: EMOJI.backIcon, style: 'danger' })];
+// Ta'lim kanalimiz / Test Platformamiz / Founder / FAQ / Botni baholang endi
+// "Biz haqimizda" submenyusi ichida bo'lgani uchun, ularning "Orqaga" tugmasi
+// to'g'ridan-to'g'ri asosiy menyuga emas, shu submenyuga qaytaradi
+const backToAboutRow = [btn({ text: 'Orqaga', callback_data: 'menu_about', icon: EMOJI.backIcon, style: 'danger' })];
 
 // ---------------------------------------------------------------------------
 // "Seni kim yaratgan?" kabi savollarga 100% aniq, o'zgarmas javob
@@ -1261,16 +1265,12 @@ function mainMenuScreen() {
     `<i>Quyidagi bo'limlardan birini tanlang yoki savol yozing</i> 👇`;
 
   const keyboard = [
-    [btn({ text: "Ta'lim kanalimiz", callback_data: 'menu_channel', icon: EMOJI.channelMenuIcon, style: 'primary' })],
-    [btn({ text: 'Test Platformamiz', callback_data: 'menu_test', icon: EMOJI.testMenuIcon, style: 'success' })],
-    [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
-    [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
     [btn({ text: '🎯 Mandat tanlash', callback_data: 'menu_yonalish', style: 'success' })],
     [btn({ text: '🔎 Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger' })],
     [btn({ text: '📊 189 ball', callback_data: 'menu_189', style: 'primary' })],
     [btn({ text: '📋 Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary' })],
     [btn({ text: "🆔 Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger' })],
-    [btn({ text: 'Botni baholang', callback_data: 'menu_baho', icon: EMOJI.starIcon, style: 'success' })],
+    [btn({ text: '🏢 Biz haqimizda', callback_data: 'menu_about', style: 'success' })],
   ];
 
   if (MINI_APP_URL) {
@@ -1278,6 +1278,27 @@ function mainMenuScreen() {
       btn({ text: 'Qulay ilova', web_app: { url: MINI_APP_URL }, style: 'primary' }),
     ]);
   }
+
+  return { text, keyboard };
+}
+
+// ---------------------------------------------------------------------------
+// "Biz haqimizda" — bot/jamoa haqidagi bo'limlarni bitta submenyuga jamlaydi
+// (Ta'lim kanalimiz, Test Platformamiz, Founder, FAQ, Botni baholang)
+// ---------------------------------------------------------------------------
+function aboutScreen() {
+  const text =
+    `🏢 <b>Biz haqimizda</b>\n\n` +
+    `<i>Quyidagi bo'limlardan birini tanlang</i> 👇`;
+
+  const keyboard = [
+    [btn({ text: "Ta'lim kanalimiz", callback_data: 'menu_channel', icon: EMOJI.channelMenuIcon, style: 'primary' })],
+    [btn({ text: 'Test Platformamiz', callback_data: 'menu_test', icon: EMOJI.testMenuIcon, style: 'success' })],
+    [btn({ text: 'Elmurod Allanazarov', callback_data: 'menu_founder', icon: EMOJI.founderMenuIcon, style: 'danger' })],
+    [btn({ text: '❓ Tez-tez so\'raladigan savollar', callback_data: 'menu_faq', style: 'primary' })],
+    [btn({ text: 'Botni baholang', callback_data: 'menu_baho', icon: EMOJI.starIcon, style: 'success' })],
+    backRow,
+  ];
 
   return { text, keyboard };
 }
@@ -1290,7 +1311,7 @@ function channelScreen() {
 
   const keyboard = [
     [btn({ text: 'Talaba', url: 'https://t.me/talimtalaba', style: 'primary', icon: EMOJI.channelButtonIcon })],
-    backRow,
+    backToAboutRow,
   ];
 
   return { text, keyboard };
@@ -1310,7 +1331,7 @@ function testScreen() {
         icon: EMOJI.testButtonIcon,
       }),
     ],
-    backRow,
+    backToAboutRow,
   ];
 
   return { text, keyboard };
@@ -1337,7 +1358,7 @@ function founderScreen() {
       }),
     ],
     [btn({ text: 'Telefon', callback_data: 'show_phone', style: 'primary', icon: EMOJI.phoneIcon })],
-    backRow,
+    backToAboutRow,
   ];
 
   return { text, keyboard };
@@ -1355,7 +1376,7 @@ function faqScreen() {
     `<b>4. Muammo yoki taklif bo'lsa?</b>\n` +
     `Mini ilovadagi "Fikr-mulohaza" bo'limi orqali yozing yoki bevosita <b>Elmurod Allanazarov</b>ga murojaat qiling.`;
 
-  const keyboard = [backRow];
+  const keyboard = [backToAboutRow];
   return { text, keyboard };
 }
 
@@ -1440,7 +1461,7 @@ function ratingScreen(userId) {
       `⭐ <b>Botni baholang</b>\n\n` +
       `Siz bugun allaqachon <b>${BAHO_KUNLIK_LIMIT}</b> marta baholadingiz. ` +
       `Rahmat! Ertaga yana baholashingiz mumkin bo'ladi 🙏`;
-    return { text, keyboard: [backRow] };
+    return { text, keyboard: [backToAboutRow] };
   }
 
   const text =
@@ -1464,7 +1485,7 @@ function ratingScreen(userId) {
   if (selected) {
     keyboard.push([btn({ text: '✅ Yuborish', callback_data: 'baho_submit', style: 'success' })]);
   }
-  keyboard.push(backRow);
+  keyboard.push(backToAboutRow);
 
   return { text, keyboard };
 }
@@ -1906,6 +1927,7 @@ async function askForYonalishBall(chatId, userId) {
 
 const SCREENS = {
   menu_back: mainMenuScreen,
+  menu_about: aboutScreen,
   menu_channel: channelScreen,
   menu_test: testScreen,
   menu_founder: founderScreen,
@@ -3579,7 +3601,7 @@ bot.on('callback_query', async (query) => {
     const thankYouText =
       `${'⭐'.repeat(selected)}\n\n` +
       `Bahoyingiz uchun rahmat! Siz bizning yaxshilanishimizga yordam bermoqdasiz! 🙏`;
-    await editRatingScreen(chatId, messageId, thankYouText, [backRow]);
+    await editRatingScreen(chatId, messageId, thankYouText, [backToAboutRow]);
     return;
   }
 
