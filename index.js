@@ -696,6 +696,89 @@ async function askForMandatId(chatId, userId) {
 }
 
 // ---------------------------------------------------------------------------
+// ID bo'yicha natijani qidirib, chiqarib beruvchi UMUMIY funksiya. Buni ikki
+// joy chaqiradi: (1) foydalanuvchi "Natijamni tekshirish (ID)" tugmasini bosib,
+// keyin ID yozganda, (2) foydalanuvchi hech qanday tugma bosmasdan, to'g'ridan-
+// to'g'ri AI'ga "mening IDim 5506347, ko'rib ber" deb yozganda — shu holatni
+// pastdagi AI xabar handleridagi detectMandatIdIntent() aniqlab, shu funksiyaga
+// yo'naltiradi (AI'ga umuman yubormaydi, chunki AI'da haqiqiy natija yo'q).
+// ---------------------------------------------------------------------------
+async function runMandatIdLookup(chatId, entrantId) {
+  try {
+    await bot.sendChatAction(chatId, 'typing');
+  } catch (err) {
+    console.error('sendChatAction xatosi:', err.message);
+  }
+
+  let thinkingMsgId = null;
+  try {
+    const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...', { parse_mode: 'HTML' });
+    thinkingMsgId = thinkingMsg.message_id;
+  } catch (err) {
+    console.error("Mandat ID 'qidirilmoqda' xabari xatosi:", err.message);
+  }
+
+  let result = null;
+  try {
+    result = await fetchMandatById(entrantId);
+  } catch (err) {
+    console.error('Mandat ID qidiruv xatosi:', err.message);
+  }
+
+  let rankInfo = null;
+  if (result && result.name) {
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText('<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> Reytingdagi o\'rningiz hisoblanmoqda...', {
+          chat_id: chatId,
+          message_id: thinkingMsgId,
+          parse_mode: 'HTML',
+        });
+      } catch (err) {}
+    }
+    rankInfo = await computeMandatIdRanking(result, entrantId);
+  }
+
+  const resultText = formatMandatIdResult(result, entrantId, rankInfo);
+  const sendOptions = { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } };
+
+  if (thinkingMsgId) {
+    try {
+      await bot.editMessageText(resultText, {
+        chat_id: chatId,
+        message_id: thinkingMsgId,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [backRow] },
+      });
+    } catch (err) {
+      console.error('Mandat ID natijasini tahrirlashda xatolik:', err.message);
+    }
+  } else {
+    try {
+      await bot.sendMessage(chatId, resultText, sendOptions);
+    } catch (err) {
+      console.error('Mandat ID natijasini yuborishda xatolik:', err.message);
+    }
+  }
+}
+
+// Xabar matnida "mening IDim shu, ko'rib ber" kabi niyatni aniqlaydi:
+// 7 xonali raqam BOR va shu bilan birga ID/natija/tekshirish kabi kalit so'z bor.
+// Ikkalasi ham bo'lishi shart — aks holda oddiy 7 xonali raqamli xabar (masalan
+// telefon qismi yoki boshqa narsa) noto'g'ri ID sifatida tutib qolinmasin.
+const MANDAT_ID_INTENT_REGEX = /\b(id|ай\s*ди|айди|natija|natijam|natijamni|tekshir|ko'rib\s*ber|korib\s*ber|mandat|utd|reyting|o'rn|orin)\b/i;
+
+function detectMandatIdIntent(text) {
+  if (!text) return null;
+  const idMatch = text.match(/\b\d{7}\b/);
+  if (!idMatch) return null;
+  if (!MANDAT_ID_INTENT_REGEX.test(text)) return null;
+  return idMatch[0];
+}
+
+
+
+// ---------------------------------------------------------------------------
 // "Mening 5 ta tanlovim" — O'zbekistonda abituriyentlar hujjat topshirishda
 // 5 tagacha yo'nalish tanlashadi. Bu yerda foydalanuvchi "Mandat tanlash"
 // natijalaridan yoqqan yo'nalishlarni o'z ro'yxatiga (5 tagacha) qo'shib
@@ -3258,6 +3341,20 @@ bot.on('message', async (msg) => {
   const rawReplyText = msg.reply_to_message?.text || msg.reply_to_message?.caption || '';
   const replyContext = repliedFromBot && rawReplyText ? stripAllHtml(rawReplyText) : undefined;
 
+  // Ko'p foydalanuvchi tugma bosmasdan, to'g'ridan-to'g'ri "mening IDim 5506347,
+  // ko'rib ber" deb yozadi. Bunday holatda AI'ga umuman yuborilmaydi (chunki AI'da
+  // haqiqiy mandat ma'lumoti yo'q va noto'g'ri/o'ylab topilgan javob berishi mumkin)
+  // — buning o'rniga to'g'ridan-to'g'ri haqiqiy natija saytdan olib ko'rsatiladi.
+  if (!msg.photo) {
+    const detectedId = detectMandatIdIntent(userText);
+    if (detectedId) {
+      msg._orderFlow = true;
+      awaitingMandatId.delete(msg.from.id); // agar boshqa oqim kutayotgan bo'lsa, tozalaymiz
+      await runMandatIdLookup(msg.chat.id, detectedId);
+      return;
+    }
+  }
+
   // AI ga yuborish
   try {
     // Avval "O'ylamoqda..." xabarini yuboramiz
@@ -4555,63 +4652,7 @@ bot.on('message', async (msg) => {
   }
 
   awaitingMandatId.delete(userId);
-
-  try {
-    await bot.sendChatAction(msg.chat.id, 'typing');
-  } catch (err) {
-    console.error('sendChatAction xatosi:', err.message);
-  }
-
-  let thinkingMsgId = null;
-  try {
-    const thinkingMsg = await bot.sendMessage(msg.chat.id, '<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> mandat.uzbmb.uz saytidan qidirilmoqda...', { parse_mode: 'HTML' });
-    thinkingMsgId = thinkingMsg.message_id;
-  } catch (err) {
-    console.error("Mandat ID 'qidirilmoqda' xabari xatosi:", err.message);
-  }
-
-  let result = null;
-  try {
-    result = await fetchMandatById(entrantId);
-  } catch (err) {
-    console.error('Mandat ID qidiruv xatosi:', err.message);
-  }
-
-  let rankInfo = null;
-  if (result && result.name) {
-    if (thinkingMsgId) {
-      try {
-        await bot.editMessageText('<tg-emoji emoji-id=\"5213060385661282374\">📊</tg-emoji> Reytingdagi o\'rningiz hisoblanmoqda...', {
-          chat_id: msg.chat.id,
-          message_id: thinkingMsgId,
-          parse_mode: 'HTML',
-        });
-      } catch (err) {}
-    }
-    rankInfo = await computeMandatIdRanking(result, entrantId);
-  }
-
-  const resultText = formatMandatIdResult(result, entrantId, rankInfo);
-  const sendOptions = { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } };
-
-  if (thinkingMsgId) {
-    try {
-      await bot.editMessageText(resultText, {
-        chat_id: msg.chat.id,
-        message_id: thinkingMsgId,
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: [backRow] },
-      });
-    } catch (err) {
-      console.error('Mandat ID natijasini tahrirlashda xatolik:', err.message);
-    }
-  } else {
-    try {
-      await bot.sendMessage(msg.chat.id, resultText, sendOptions);
-    } catch (err) {
-      console.error('Mandat ID natijasini yuborishda xatolik:', err.message);
-    }
-  }
+  await runMandatIdLookup(msg.chat.id, entrantId);
 });
 
 // ---------------------------------------------------------------------------
