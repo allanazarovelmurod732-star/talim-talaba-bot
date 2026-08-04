@@ -99,10 +99,7 @@ const VILOYAT_KEYWORDS = [
   { viloyat: 'Sirdaryo', keys: ['guliston', 'sirdaryo', 'sirdarё'] },
   { viloyat: 'Xorazm', keys: ['urganch', 'urgench', 'xorazm', 'xiva', 'khiva'] },
   { viloyat: "Qoraqalpog'iston", keys: ['nukus', 'qoraqalpog', 'qoraqalpoq', 'karakalpak'] },
-  // Toshkent VILOYATI (shahar emas) — filial shaharlari
   { viloyat: 'Toshkent viloyati', keys: ['chirchiq', 'chirchik', 'olmaliq', 'olmalik', 'angren', 'nurafshon', 'yangiyol', "bekobod"] },
-  // Toshkent shahri — eng oxirida tekshiriladi, chunki ko'p markaziy universitetlar
-  // nomida oddiy "Toshkent" so'zi bo'ladi (aslida boshqa hech qaysi kalit mos kelmasa shu yerga tushadi)
   { viloyat: 'Toshkent shahri', keys: ['toshkent', 'tashkent'] },
 ];
 
@@ -114,10 +111,8 @@ function detectViloyat(otmNomi) {
   return "Aniqlanmagan / Respublika miqyosidagi";
 }
 
-// Har bir viloyat bo'yicha: universitetlar soni, yo'nalishlar soni, jami
-// grant/kontrakt kvotasi va o'rtacha/eng yuqori/eng past grant balini hisoblaydi
 function computeViloyatStats() {
-  const map = new Map(); // viloyat -> { otmSet, yonalishSoni, grantKvota, kontraktKvota, grantBalls[], kontraktBalls[] }
+  const map = new Map();
 
   for (const item of YONALISH_FLAT) {
     const viloyat = detectViloyat(item.otm);
@@ -154,8 +149,6 @@ function computeViloyatStats() {
     ortachaKontraktBall: avg(rec.kontraktBalls),
   }));
 
-  // "Aniqlanmagan" guruhini ro'yxat oxiriga, qolganlarini yo'nalishlar soni
-  // bo'yicha kamayish tartibida joylaymiz
   result.sort((a, b) => {
     if (a.viloyat.startsWith('Aniqlanmagan')) return 1;
     if (b.viloyat.startsWith('Aniqlanmagan')) return -1;
@@ -1439,6 +1432,7 @@ function mainMenuScreen() {
     [btn({ text: '189 ball', callback_data: 'menu_189', style: 'primary', icon: EMOJI.statsIcon })],
     [btn({ text: 'Statistika super', callback_data: 'menu_statistika', style: 'danger', icon: EMOJI.statsIcon })],
     [btn({ text: 'Viloyatlar statistikasi', callback_data: 'menu_viloyat_stat', style: 'primary', icon: EMOJI.globeIcon })],
+    [btn({ text: 'Fanlar taqqoslash', callback_data: 'menu_compare', style: 'primary', icon: EMOJI.chartIcon })],
     [btn({ text: 'Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary', icon: EMOJI.listIcon })],
     [btn({ text: "Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger', icon: EMOJI.idIcon })],
     [btn({ text: 'Biz haqimizda', callback_data: 'menu_about', style: 'success', icon: EMOJI.buildingIcon })],
@@ -1909,6 +1903,119 @@ function formatStatResult(filters, bandStats) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// "Fanlar taqqoslash" — ikkita fanlar majmuasini tanlab (har biri o'z tili
+// bilan), qaysi biri bo'yicha ro'yxatdan o'tganlar soni ko'proq/kamroq
+// ekanini solishtirib beradi. mandat.uzbmb.uz'dan jonli hisoblanadi.
+// ---------------------------------------------------------------------------
+const awaitingCompareCustomSubject = new Map(); // userId -> 'a' | 'b'
+const pendingCompareSubject = new Map(); // userId -> { step: 'a'|'b', subjectA, langA }
+const COMPARE_LANG_LABELS = {
+  cmp_lang_a_1: { edLangId: 1, label: "O'zbekcha" },
+  cmp_lang_a_2: { edLangId: 2, label: 'Русский' },
+  cmp_lang_a_3: { edLangId: 3, label: 'Qoraqalpoq' },
+  cmp_lang_a_4: { edLangId: 4, label: 'Tadjik' },
+  cmp_lang_a_5: { edLangId: 5, label: 'Qozoq' },
+};
+const COMPARE_LANG_LABELS_B = {
+  cmp_lang_b_1: { edLangId: 1, label: "O'zbekcha" },
+  cmp_lang_b_2: { edLangId: 2, label: 'Русский' },
+  cmp_lang_b_3: { edLangId: 3, label: 'Qoraqalpoq' },
+  cmp_lang_b_4: { edLangId: 4, label: 'Tadjik' },
+  cmp_lang_b_5: { edLangId: 5, label: 'Qozoq' },
+};
+
+function compareSubjectScreen(step) {
+  const isA = step === 'a';
+  const title = isA ? "1-fanlar majmuasi" : "2-fanlar majmuasi";
+  const text =
+    `<tg-emoji emoji-id=\"5244837092042750681\">📈</tg-emoji> <b>Fanlar taqqoslash</b>\n\n` +
+    (isA
+      ? `Ikkita fanlar majmuasini solishtirib, qaysi biriga <b>ko'proq abituriyent</b> ro'yxatdan o'tganini bilib olasiz — jonli, <b>mandat.uzbmb.uz</b> saytidan.\n\n`
+      : `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Birinchi majmua qabul qilindi.\n\n`) +
+    `${title}ni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>\n\n` +
+    `<i>Ro'yxatda kerakli majmua yo'q bo'lsa, "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> O'zim yozaman" tugmasini bosing.</i>`;
+
+  const prefix = isA ? 'cmp_a_subj_' : 'cmp_b_subj_';
+  const customCb = isA ? 'cmp_a_subj_custom' : 'cmp_b_subj_custom';
+  const backCb = isA ? 'menu_back' : 'cmp_back_a';
+
+  const keyboard = MANDAT_SUBJECT_OPTIONS.map((subject, i) => [
+    btn({ text: subject, callback_data: `${prefix}${i}`, style: 'primary', icon: '5373177964752019815' }),
+  ]);
+  keyboard.push([btn({ text: "O'zim yozaman", callback_data: customCb, style: 'success', icon: EMOJI.writeIcon })]);
+  keyboard.push([btn({ text: 'Orqaga', callback_data: backCb, style: 'success', icon: EMOJI.backIcon })]);
+  keyboard.push(backRow);
+
+  return { text, keyboard };
+}
+
+function compareLangScreen(step, subject) {
+  const isA = step === 'a';
+  const text = `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Fanlar majmuasi: <b>${subject}</b>\n\n<tg-emoji emoji-id=\"5447410659077661506\">🌐</tg-emoji> Ta'lim tilini tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
+
+  const p = isA ? 'cmp_lang_a_' : 'cmp_lang_b_';
+  const backCb = isA ? 'menu_compare' : 'cmp_back_b';
+
+  const keyboard = [
+    [btn({ text: "O'zbekcha", callback_data: `${p}1`, style: 'primary', icon: '5271648932194195260' })],
+    [btn({ text: 'Русский', callback_data: `${p}2`, style: 'primary', icon: '5305587746587300980' })],
+    [btn({ text: 'Qoraqalpoq', callback_data: `${p}3`, style: 'primary', icon: '5364282834078939253' })],
+    [btn({ text: 'Tadjik', callback_data: `${p}4`, style: 'primary', icon: '5244570589322039598' })],
+    [btn({ text: 'Qozoq', callback_data: `${p}5`, style: 'primary', icon: '5244446228543983332' })],
+    [btn({ text: 'Orqaga', callback_data: backCb, style: 'success', icon: EMOJI.backIcon })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
+async function askForCompareSubjectB(chatId, userId) {
+  const { text, keyboard } = compareSubjectScreen('b');
+  await safeSend(chatId, text, keyboard);
+}
+
+async function askForCompareLang(chatId, userId, step, subject) {
+  const prev = pendingCompareSubject.get(userId) || {};
+  if (step === 'a') {
+    pendingCompareSubject.set(userId, { ...prev, subjectA: subject });
+  } else {
+    pendingCompareSubject.set(userId, { ...prev, subjectB: subject });
+  }
+  const { text, keyboard } = compareLangScreen(step, subject);
+  await safeSend(chatId, text, keyboard);
+}
+
+// Ikkala majmua uchun natijani solishtirib, matn ko'rinishida tayyorlaydi
+function formatCompareResult(a, b) {
+  const winner = a.total === b.total ? null : a.total > b.total ? 'a' : 'b';
+  const diff = Math.abs(a.total - b.total);
+
+  const block = (label, f, stats) =>
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> <b>${label}</b>\n` +
+    `${f.subject} (${f.langLabel})\n` +
+    `<tg-emoji emoji-id=\"5319106456799158575\">👥</tg-emoji> Jami ro'yxatdan o'tgan: <b>${stats.total}</b> ta` +
+    (stats.approx ? ` <i>(taxminiy)</i>` : '');
+
+  let conclusion;
+  if (!winner) {
+    conclusion = `<tg-emoji emoji-id=\"5314504236132747481\">❓</tg-emoji> Ikkala majmuada ham abituriyentlar soni <b>teng</b>.`;
+  } else {
+    const moreLabel = winner === 'a' ? '1-majmua' : '2-majmua';
+    const lessLabel = winner === 'a' ? '2-majmua' : '1-majmua';
+    conclusion =
+      `<tg-emoji emoji-id=\"5436325327011854319\">🎯</tg-emoji> <b>${moreLabel}</b>ga <b>${diff}</b> ta ko'proq abituriyent ro'yxatdan o'tgan ` +
+      `— demak <b>${lessLabel}</b>da raqobat nisbatan <b>pastroq</b> bo'lishi mumkin.`;
+  }
+
+  return (
+    `<tg-emoji emoji-id=\"5244837092042750681\">📈</tg-emoji> <b>Fanlar taqqoslash natijasi</b>\n\n` +
+    `${block('1-majmua', a.filters, a)}\n\n` +
+    `${block('2-majmua', b.filters, b)}\n\n` +
+    `${conclusion}`
+  );
+}
+
 function kengaytirilganSubjectScreen() {
   const text =
     `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> <b>Kengaytirilgan qidiruv</b>\n\n` +
@@ -2192,7 +2299,6 @@ function fmtSon(n) {
   return new Intl.NumberFormat('uz-UZ').format(n);
 }
 
-// Viloyatlar ro'yxati — har biri tugma, bosilganda shu viloyatning tafsiloti ochiladi
 function viloyatStatMainScreen() {
   const stats = computeViloyatStats();
   const jamiYonalish = stats.reduce((s, r) => s + r.yonalishlarSoni, 0);
@@ -2217,7 +2323,6 @@ function viloyatStatMainScreen() {
   return { text, keyboard };
 }
 
-// Bitta viloyat bo'yicha batafsil ko'rsatkichlar
 function viloyatStatDetailScreen(rec) {
   const text =
     `${emoji(EMOJI.globeIcon, '🗺')} <b>${rec.viloyat}</b>\n\n` +
@@ -2252,6 +2357,9 @@ const SCREENS = {
   menu_189: ball189SubjectScreen,
   menu_statistika: statistikaSubjectScreen,
   menu_admin_advice: adminAdviceScreen,
+  menu_compare: () => compareSubjectScreen('a'),
+  cmp_back_a: () => compareSubjectScreen('a'),
+  cmp_back_b: () => compareSubjectScreen('b'),
 };
 
 // ---------------------------------------------------------------------------
@@ -2714,6 +2822,36 @@ bot.on('message', async (msg) => {
   }
 
   await askForStatLang(msg.chat.id, userId, subject);
+});
+
+// ---------------------------------------------------------------------------
+// "Fanlar taqqoslash" — foydalanuvchi o'zining fanlar majmuasini qo'lda yozganda
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  const step = awaitingCompareCustomSubject.get(userId);
+  if (!step) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const subject = msg.text.trim();
+  awaitingCompareCustomSubject.delete(userId);
+
+  if (!subject) {
+    awaitingCompareCustomSubject.set(userId, step);
+    try {
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, fanlar majmuasini matn ko'rinishida yozing.");
+    } catch (err) {
+      console.error('Taqqoslash fanlar majmuasi validatsiya xabari xatosi:', err.message);
+    }
+    return;
+  }
+
+  await askForCompareLang(msg.chat.id, userId, step, subject);
 });
 
 // ---------------------------------------------------------------------------
@@ -3688,6 +3826,168 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "Fanlar taqqoslash" — 1-majmua ro'yxatdan tanlandi
+  if (query.data && query.data.startsWith('cmp_a_subj_') && query.data !== 'cmp_a_subj_custom') {
+    const index = parseInt(query.data.replace('cmp_a_subj_', ''), 10);
+    const subject = MANDAT_SUBJECT_OPTIONS[index];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    if (!subject) return;
+    await askForCompareLang(chatId, userId, 'a', subject);
+    return;
+  }
+
+  // "Fanlar taqqoslash" — 2-majmua ro'yxatdan tanlandi
+  if (query.data && query.data.startsWith('cmp_b_subj_') && query.data !== 'cmp_b_subj_custom') {
+    const index = parseInt(query.data.replace('cmp_b_subj_', ''), 10);
+    const subject = MANDAT_SUBJECT_OPTIONS[index];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    if (!subject) return;
+    await askForCompareLang(chatId, userId, 'b', subject);
+    return;
+  }
+
+  // "Fanlar taqqoslash" — foydalanuvchi o'zi fanlar majmuasini yozmoqchi (1 yoki 2-majmua)
+  if (query.data === 'cmp_a_subj_custom' || query.data === 'cmp_b_subj_custom') {
+    const step = query.data === 'cmp_a_subj_custom' ? 'a' : 'b';
+    awaitingCompareCustomSubject.set(userId, step);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    try {
+      await bot.sendMessage(
+        chatId,
+        "<tg-emoji emoji-id=\"5429419526406033514\">✍️</tg-emoji> Fanlar majmuangizni yozing (masalan: <b>Matematika + Fizika</b>):",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error("Taqqoslash fanlar majmuasi so'rash xabari xatosi:", err.message);
+    }
+    return;
+  }
+
+  // "Fanlar taqqoslash" — 1-majmua tili tanlandi -> 2-majmuani so'raymiz
+  if (COMPARE_LANG_LABELS[query.data]) {
+    const { edLangId, label } = COMPARE_LANG_LABELS[query.data];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const state = pendingCompareSubject.get(userId) || {};
+    pendingCompareSubject.set(userId, { ...state, langAId: edLangId, langALabel: label });
+    await askForCompareSubjectB(chatId, userId);
+    return;
+  }
+
+  // "Fanlar taqqoslash" — 2-majmua tili tanlandi -> ikkalasini ham hisoblab, solishtiramiz
+  if (COMPARE_LANG_LABELS_B[query.data]) {
+    const { edLangId, label } = COMPARE_LANG_LABELS_B[query.data];
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const state = pendingCompareSubject.get(userId) || {};
+    pendingCompareSubject.delete(userId);
+
+    const partsA = (state.subjectA || '').split('+').map((p) => p.trim()).filter(Boolean);
+    const partsB = (state.subjectB || '').split('+').map((p) => p.trim()).filter(Boolean);
+    if (partsA.length !== 2 || partsB.length !== 2) {
+      try {
+        await bot.sendMessage(
+          chatId,
+          `<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Fanlar majmuasi noto'g'ri formatda. Iltimos, "<b>Fan1 + Fan2</b>" ko'rinishida yozing (masalan: Matematika + Fizika).`,
+          { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+        );
+      } catch (err) {
+        console.error('Taqqoslash format xabari xatosi:', err.message);
+      }
+      return;
+    }
+
+    let thinkingMsgId = null;
+    try {
+      const thinkingMsg = await bot.sendMessage(chatId, '<tg-emoji emoji-id="5017088445353296841">🔎</tg-emoji> mandat.uzbmb.uz saytidan hisoblanmoqda (2 ta majmua)...', { parse_mode: 'HTML' });
+      thinkingMsgId = thinkingMsg.message_id;
+    } catch (err) {
+      console.error("Taqqoslash 'hisoblanmoqda' xabari xatosi:", err.message);
+    }
+
+    let totalA = null;
+    let totalB = null;
+    let fetchErr = null;
+    try {
+      [totalA, totalB] = await Promise.all([
+        getKQTotalCount(partsA[0], partsA[1], state.langAId),
+        getKQTotalCount(partsB[0], partsB[1], edLangId),
+      ]);
+    } catch (err) {
+      fetchErr = err;
+      console.error('Taqqoslash hisoblashda xatolik:', err.message);
+    }
+
+    if (fetchErr || totalA === null || totalB === null) {
+      const errText = "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> mandat.uzbmb.uz saytidan ma'lumot olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.";
+      if (thinkingMsgId) {
+        try {
+          await bot.editMessageText(errText, {
+            chat_id: chatId,
+            message_id: thinkingMsgId,
+            reply_markup: { inline_keyboard: [backRow] },
+          });
+        } catch (err) {}
+      } else {
+        await safeSend(chatId, errText, [backRow]);
+      }
+      return;
+    }
+
+    const a = {
+      filters: { subject: state.subjectA, langLabel: state.langALabel },
+      total: totalA.count,
+      approx: !!totalA.approx,
+    };
+    const b = {
+      filters: { subject: state.subjectB, langLabel: label },
+      total: totalB.count,
+      approx: !!totalB.approx,
+    };
+
+    const resultText = formatCompareResult(a, b);
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText(resultText, {
+          chat_id: chatId,
+          message_id: thinkingMsgId,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {
+        console.error('Taqqoslash natijasini tahrirlashda xatolik:', err.message);
+      }
+    } else {
+      await safeSend(chatId, resultText, [backRow]);
+    }
+    return;
+  }
+
   // "Kengaytirilgan qidiruv" — ta'lim tili tanlandi -> to'liq ro'yxat yoki ID
   // orqali qidirishni tanlashni so'raymiz
   if (KQ_LANG_LABELS[query.data]) {
@@ -4209,6 +4509,8 @@ bot.on('callback_query', async (query) => {
   pending189Subject.delete(userId);
   awaitingStatCustomSubject.delete(userId);
   pendingStatSubject.delete(userId);
+  awaitingCompareCustomSubject.delete(userId);
+  if (query.data !== 'cmp_back_b') pendingCompareSubject.delete(userId);
 
   const { text, keyboard } = screenFn();
   await deleteMessageSafe(chatId, messageId);
