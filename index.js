@@ -78,6 +78,94 @@ function loadYonalishDb() {
 loadYonalishDb();
 
 // ---------------------------------------------------------------------------
+// "Viloyatlar statistikasi" — YONALISH_FLAT (allaqachon xotirada, hech qanday
+// tarmoq so'rovisiz) universitet nomi ichidagi shahar/hudud nomiga qarab
+// taxminiy ravishda viloyatlarga guruhlanadi va har bir viloyat bo'yicha
+// umumiy ko'rsatkichlar (universitetlar/yo'nalishlar soni, jami kvota,
+// o'rtacha ball) hisoblab chiqiladi. Bu — faqat universitet NOMIGA asoslangan
+// evristika, shuning uchun 100% aniq emas (ba'zi filiallar/nomlanishlar
+// noto'g'ri guruhlanishi mumkin) — ekranda shu haqda eslatma beriladi.
+// ---------------------------------------------------------------------------
+const VILOYAT_KEYWORDS = [
+  { viloyat: "Farg'ona", keys: ["farg'on", 'fargon', 'farg`on', "farg‘on", 'qo\'qon', 'qoqon', 'margilon', "marg'ilon"] },
+  { viloyat: 'Andijon', keys: ['andijon'] },
+  { viloyat: 'Namangan', keys: ['namangan'] },
+  { viloyat: 'Samarqand', keys: ['samarqand', 'samarkand'] },
+  { viloyat: 'Buxoro', keys: ['buxoro', 'bukhara'] },
+  { viloyat: 'Navoiy', keys: ['navoiy', 'navoi', 'zarafshon'] },
+  { viloyat: 'Qashqadaryo', keys: ['qarshi', 'qashqadaryo', 'shahrisabz'] },
+  { viloyat: 'Surxondaryo', keys: ['termiz', 'termez', 'surxondaryo', 'surxon'] },
+  { viloyat: 'Jizzax', keys: ['jizzax'] },
+  { viloyat: 'Sirdaryo', keys: ['guliston', 'sirdaryo', 'sirdarё'] },
+  { viloyat: 'Xorazm', keys: ['urganch', 'urgench', 'xorazm', 'xiva', 'khiva'] },
+  { viloyat: "Qoraqalpog'iston", keys: ['nukus', 'qoraqalpog', 'qoraqalpoq', 'karakalpak'] },
+  // Toshkent VILOYATI (shahar emas) — filial shaharlari
+  { viloyat: 'Toshkent viloyati', keys: ['chirchiq', 'chirchik', 'olmaliq', 'olmalik', 'angren', 'nurafshon', 'yangiyol', "bekobod"] },
+  // Toshkent shahri — eng oxirida tekshiriladi, chunki ko'p markaziy universitetlar
+  // nomida oddiy "Toshkent" so'zi bo'ladi (aslida boshqa hech qaysi kalit mos kelmasa shu yerga tushadi)
+  { viloyat: 'Toshkent shahri', keys: ['toshkent', 'tashkent'] },
+];
+
+function detectViloyat(otmNomi) {
+  const norm = normalizeText(otmNomi || '');
+  for (const group of VILOYAT_KEYWORDS) {
+    if (group.keys.some((k) => norm.includes(k))) return group.viloyat;
+  }
+  return "Aniqlanmagan / Respublika miqyosidagi";
+}
+
+// Har bir viloyat bo'yicha: universitetlar soni, yo'nalishlar soni, jami
+// grant/kontrakt kvotasi va o'rtacha/eng yuqori/eng past grant balini hisoblaydi
+function computeViloyatStats() {
+  const map = new Map(); // viloyat -> { otmSet, yonalishSoni, grantKvota, kontraktKvota, grantBalls[], kontraktBalls[] }
+
+  for (const item of YONALISH_FLAT) {
+    const viloyat = detectViloyat(item.otm);
+    let rec = map.get(viloyat);
+    if (!rec) {
+      rec = { viloyat, otmSet: new Set(), yonalishSoni: 0, grantKvota: 0, kontraktKvota: 0, grantBalls: [], kontraktBalls: [] };
+      map.set(viloyat, rec);
+    }
+    rec.otmSet.add(item.otm);
+    rec.yonalishSoni += 1;
+
+    const grantKvota = Number(item.grantKvota) || 0;
+    const kontraktKvota = Number(item.kontraktKvota) || 0;
+    rec.grantKvota += grantKvota;
+    rec.kontraktKvota += kontraktKvota;
+
+    const grantBall = item.grantBall !== undefined && item.grantBall !== null && item.grantBall !== '' ? Number(item.grantBall) : null;
+    const kontraktBall = item.kontraktBall !== undefined && item.kontraktBall !== null && item.kontraktBall !== '' ? Number(item.kontraktBall) : null;
+    if (grantKvota > 0 && grantBall !== null && Number.isFinite(grantBall)) rec.grantBalls.push(grantBall);
+    if (kontraktKvota > 0 && kontraktBall !== null && Number.isFinite(kontraktBall)) rec.kontraktBalls.push(kontraktBall);
+  }
+
+  const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+
+  const result = [...map.values()].map((rec) => ({
+    viloyat: rec.viloyat,
+    universitetlarSoni: rec.otmSet.size,
+    yonalishlarSoni: rec.yonalishSoni,
+    grantKvota: rec.grantKvota,
+    kontraktKvota: rec.kontraktKvota,
+    ortachaGrantBall: avg(rec.grantBalls),
+    engYuqoriGrantBall: rec.grantBalls.length ? Math.max(...rec.grantBalls) : null,
+    engPastGrantBall: rec.grantBalls.length ? Math.min(...rec.grantBalls) : null,
+    ortachaKontraktBall: avg(rec.kontraktBalls),
+  }));
+
+  // "Aniqlanmagan" guruhini ro'yxat oxiriga, qolganlarini yo'nalishlar soni
+  // bo'yicha kamayish tartibida joylaymiz
+  result.sort((a, b) => {
+    if (a.viloyat.startsWith('Aniqlanmagan')) return 1;
+    if (b.viloyat.startsWith('Aniqlanmagan')) return -1;
+    return b.yonalishlarSoni - a.yonalishlarSoni;
+  });
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // "Natijamni tekshirish (ID)" — foydalanuvchi yuborgan BITTA abituriyent ID'i
 // uchun, jonli ravishda (hech qanday oldindan yig'ilgan baza ISHLATMASDAN)
 // mandat.uzbmb.uz saytiga so'rov yuborib, shu bitta odamning natijasini
@@ -1350,6 +1438,7 @@ function mainMenuScreen() {
     [btn({ text: 'Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger', icon: EMOJI.searchIcon })],
     [btn({ text: '189 ball', callback_data: 'menu_189', style: 'primary', icon: EMOJI.statsIcon })],
     [btn({ text: 'Statistika super', callback_data: 'menu_statistika', style: 'danger', icon: EMOJI.statsIcon })],
+    [btn({ text: 'Viloyatlar statistikasi', callback_data: 'menu_viloyat_stat', style: 'primary', icon: EMOJI.globeIcon })],
     [btn({ text: 'Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary', icon: EMOJI.listIcon })],
     [btn({ text: "Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger', icon: EMOJI.idIcon })],
     [btn({ text: 'Biz haqimizda', callback_data: 'menu_about', style: 'success', icon: EMOJI.buildingIcon })],
@@ -2092,8 +2181,67 @@ async function askForYonalishBall(chatId, userId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// "Viloyatlar statistikasi" ekranlari
+// ---------------------------------------------------------------------------
+function fmtBall(n) {
+  return n === null || n === undefined ? '—' : n.toFixed(1);
+}
+
+function fmtSon(n) {
+  return new Intl.NumberFormat('uz-UZ').format(n);
+}
+
+// Viloyatlar ro'yxati — har biri tugma, bosilganda shu viloyatning tafsiloti ochiladi
+function viloyatStatMainScreen() {
+  const stats = computeViloyatStats();
+  const jamiYonalish = stats.reduce((s, r) => s + r.yonalishlarSoni, 0);
+  const jamiUniversitet = stats.reduce((s, r) => s + r.universitetlarSoni, 0);
+
+  const text =
+    `${emoji(EMOJI.globeIcon, '🗺')} <b>Viloyatlar bo'yicha statistika</b>\n\n` +
+    `Jami <b>${fmtSon(jamiUniversitet)}</b> ta OTM va <b>${fmtSon(jamiYonalish)}</b> ta yo'nalish bo'yicha ma'lumotlar bazasi.\n\n` +
+    `Batafsil ko'rish uchun viloyatni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>\n\n` +
+    `<i>Eslatma: guruhlash universitet NOMIGA qarab avtomatik aniqlanadi, shuning uchun ba'zi filiallar taxminiy joylashishi mumkin.</i>`;
+
+  const keyboard = stats.map((r, i) => [
+    btn({
+      text: `${r.viloyat} — ${r.yonalishlarSoni} ta yo'nalish`,
+      callback_data: `vstat_${i}`,
+      style: 'primary',
+      icon: EMOJI.globeIcon,
+    }),
+  ]);
+  keyboard.push(backRow);
+
+  return { text, keyboard };
+}
+
+// Bitta viloyat bo'yicha batafsil ko'rsatkichlar
+function viloyatStatDetailScreen(rec) {
+  const text =
+    `${emoji(EMOJI.globeIcon, '🗺')} <b>${rec.viloyat}</b>\n\n` +
+    `${emoji(EMOJI.buildingIcon, '🏫')} OTMlar soni: <b>${fmtSon(rec.universitetlarSoni)}</b>\n` +
+    `${emoji(EMOJI.booksIcon, '📚')} Yo'nalishlar soni: <b>${fmtSon(rec.yonalishlarSoni)}</b>\n\n` +
+    `${emoji(EMOJI.greenIcon, '🟢')} Jami grant kvotasi: <b>${fmtSon(rec.grantKvota)}</b> o'rin\n` +
+    `${emoji(EMOJI.blueIcon, '🔵')} Jami kontrakt kvotasi: <b>${fmtSon(rec.kontraktKvota)}</b> o'rin\n\n` +
+    `${emoji(EMOJI.chartIcon, '📈')} O'rtacha grant balli: <b>${fmtBall(rec.ortachaGrantBall)}</b>\n` +
+    `${emoji(EMOJI.trophyIcon, '🏆')} Eng yuqori grant balli: <b>${fmtBall(rec.engYuqoriGrantBall)}</b>\n` +
+    `${emoji(EMOJI.flagIcon, '🚩')} Eng past grant balli: <b>${fmtBall(rec.engPastGrantBall)}</b>\n` +
+    `${emoji(EMOJI.moneyIcon, '💰')} O'rtacha kontrakt balli: <b>${fmtBall(rec.ortachaKontraktBall)}</b>\n\n` +
+    YONALISH_YIL_ESLATMASI;
+
+  const keyboard = [
+    [btn({ text: 'Viloyatlar ro\'yxatiga qaytish', callback_data: 'menu_viloyat_stat', style: 'success', icon: EMOJI.backIcon })],
+    backRow,
+  ];
+
+  return { text, keyboard };
+}
+
 const SCREENS = {
   menu_back: mainMenuScreen,
+  menu_viloyat_stat: viloyatStatMainScreen,
   menu_about: aboutScreen,
   menu_channel: channelScreen,
   menu_test: testScreen,
@@ -3975,6 +4123,30 @@ bot.on('callback_query', async (query) => {
         console.error('answerCallbackQuery xatosi:', err.message);
       }
     }
+    return;
+  }
+
+  // "Viloyatlar statistikasi" — foydalanuvchi ro'yxatdan bitta viloyatni tanladi
+  if (query.data && query.data.startsWith('vstat_')) {
+    const index = parseInt(query.data.replace('vstat_', ''), 10);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const stats = computeViloyatStats();
+    const rec = stats[index];
+    if (!rec) {
+      await safeSend(chatId, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Ma'lumot topilmadi, qaytadan urinib ko'ring.", [backRow]);
+      return;
+    }
+
+    const { text, keyboard } = viloyatStatDetailScreen(rec);
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await safeSend(chatId, outText, outKeyboard);
     return;
   }
 
