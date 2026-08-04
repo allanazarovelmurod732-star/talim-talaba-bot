@@ -4695,8 +4695,14 @@ async function configureBot() {
 const app = express();
 app.use(express.json());
 
-app.get('/', (req, res) => {
-  res.send("Ta'lim Talaba bot ishlamoqda <tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji>");
+// Bu route ikki maqsadda ishlatiladi: (1) brauzerda ochib ko'rish uchun,
+// (2) UptimeRobot/cron-job.org kabi tashqi xizmatlar bilan serverni "uxlab
+// qolishdan" saqlash (keep-alive ping) uchun — shuning uchun tez va oddiy
+// javob qaytarishi kerak (Telegram-maxsus <tg-emoji> tegi bu yerda ishlamaydi,
+// chunki bu oddiy HTTP javobi, Telegram xabari emas).
+app.get(['/', '/ping', '/health'], (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.status(200).send("Ta'lim Talaba bot ishlamoqda ✅");
 });
 
 app.post(`/bot${BOT_TOKEN}`, (req, res) => {
