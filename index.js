@@ -204,7 +204,11 @@ async function fetchEntrantSubjectDetails(hashId) {
 async function fetchMandatById(entrantId) {
   const searchUrl = `https://mandat.uzbmb.uz/Bakalavr/MainSearch?entrantid=${encodeURIComponent(entrantId)}&lang=uz`;
   const res = await fetch(searchUrl, { headers: { 'User-Agent': MANDAT_UA } });
-  if (!res.ok) throw new Error(`mandat.uzbmb.uz MainSearch ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`mandat.uzbmb.uz MainSearch ${res.status}`);
+    err.status = res.status; // 429/403 kabi holatlarni yuqorida (checkOneBuyurtma) alohida ushlash uchun
+    throw err;
+  }
   const html = await res.text();
 
   const idMarker = `# ${entrantId}`;
@@ -719,10 +723,33 @@ async function runMandatIdLookup(chatId, entrantId) {
   }
 
   let result = null;
+  let rateLimited = false;
   try {
     result = await fetchMandatById(entrantId);
   } catch (err) {
+    if (isRateLimitError(err)) rateLimited = true;
     console.error('Mandat ID qidiruv xatosi:', err.message);
+  }
+
+  if (rateLimited) {
+    const busyText =
+      `<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> mandat.uzbmb.uz sayti hozir juda band (ko'p so'rov tufayli vaqtincha cheklov qo'ydi).\n\n` +
+      `Iltimos, bir necha daqiqadan so'ng qayta urinib ko'ring.`;
+    if (thinkingMsgId) {
+      try {
+        await bot.editMessageText(busyText, {
+          chat_id: chatId,
+          message_id: thinkingMsgId,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [backRow] },
+        });
+      } catch (err) {}
+    } else {
+      try {
+        await bot.sendMessage(chatId, busyText, { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } });
+      } catch (err) {}
+    }
+    return;
   }
 
   let rankInfo = null;
@@ -862,6 +889,269 @@ function removeFromTanlov(userId, index) {
   TANLOV_DB.set(String(userId), list);
   saveTanlovDb();
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// "Mandat buyurtma" — natijalar hali E'LON QILINMASDAN OLDIN, foydalanuvchi
+// o'z abituriyent ID'ini oldindan "buyurtma" qilib qo'yadi. Bot fon rejimida
+// (BUYURTMA_POLL_INTERVAL_MS oralig'ida) shu ID'larni mandat.uzbmb.uz'dan
+// tekshirib turadi; natija chiqishi bilan (ya'ni fetchMandatById endi bo'sh
+// emas natija qaytarganda) foydalanuvchiga AVTOMATIK ravishda yuboriladi va
+// buyurtma ro'yxatdan olib tashlanadi.
+//
+// Ma'lumot MongoDB Atlas'da saqlanadi (fayl emas) — shu tufayli hosting
+// qayta ishga tushsa yoki disk vaqtinchalik bo'lsa ham, buyurtmalar
+// yo'qolmaydi. .env fayliga quyidagilarni qo'shing:
+//   MONGODB_URI=mongodb+srv://<user>:<parol>@<cluster>.mongodb.net/?retryWrites=true&w=majority
+//   MONGODB_DB_NAME=talimtalaba   (ixtiyoriy, standart: "talimtalaba")
+// ---------------------------------------------------------------------------
+const { MongoClient } = require('mongodb');
+
+const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'talimtalaba';
+const BUYURTMA_COLLECTION = 'buyurtmalar';
+
+// Har necha millisekundda bir marta barcha buyurtmalar tekshirilishi
+const BUYURTMA_POLL_INTERVAL_MS = Number(process.env.BUYURTMA_POLL_INTERVAL_MS) || 3 * 60 * 1000; // 3 daqiqa
+// mandat.uzbmb.uz saytini "bombardimon" qilib qo'ymaslik uchun, har bir so'rov orasida kichik pauza
+const BUYURTMA_REQUEST_GAP_MS = Number(process.env.BUYURTMA_REQUEST_GAP_MS) || 1500;
+
+let mongoClient = null;
+let buyurtmaCollection = null;
+
+async function connectMongo() {
+  if (!MONGODB_URI) {
+    console.warn('[MONGO] MONGODB_URI berilmagan — "Mandat buyurtma" MongoDB\'siz ishlay olmaydi.');
+    return;
+  }
+  try {
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    const db = mongoClient.db(MONGODB_DB_NAME);
+    buyurtmaCollection = db.collection(BUYURTMA_COLLECTION);
+    await buyurtmaCollection.createIndex({ 'subscribers.userId': 1 });
+    console.log(`[MONGO] Ulandi: db="${MONGODB_DB_NAME}", collection="${BUYURTMA_COLLECTION}"`);
+  } catch (err) {
+    console.error('[MONGO] Ulanishda xatolik:', err.message);
+    buyurtmaCollection = null;
+  }
+}
+
+// Document shakli: { _id: entrantId (string), subscribers: [{ userId, chatId }], createdAt: Date }
+
+// Berilgan foydalanuvchining hozirgi faol buyurtmasini topadi (bitta userId — bitta faol ID)
+async function findUserBuyurtma(userId) {
+  if (!buyurtmaCollection) return null;
+  const uid = String(userId);
+  const doc = await buyurtmaCollection.findOne({ 'subscribers.userId': uid });
+  if (!doc) return null;
+  return { entrantId: doc._id, rec: doc };
+}
+
+// Foydalanuvchi bir vaqtda faqat BITTA faol buyurtmaga ega bo'ladi — agar eski
+// buyurtmasi bo'lsa, avval o'chiriladi (keyin yangisi qo'shiladi)
+async function setUserBuyurtma(userId, chatId, entrantId) {
+  if (!buyurtmaCollection) return false;
+  await removeUserBuyurtma(userId);
+
+  await buyurtmaCollection.updateOne(
+    { _id: entrantId },
+    {
+      $setOnInsert: { createdAt: new Date() },
+      $push: { subscribers: { userId: String(userId), chatId: String(chatId) } },
+    },
+    { upsert: true }
+  );
+  return true;
+}
+
+// Foydalanuvchining (agar bo'lsa) faol buyurtmasini bekor qiladi
+async function removeUserBuyurtma(userId) {
+  if (!buyurtmaCollection) return false;
+  const uid = String(userId);
+
+  const doc = await buyurtmaCollection.findOne({ 'subscribers.userId': uid });
+  if (!doc) return false;
+
+  await buyurtmaCollection.updateOne({ _id: doc._id }, { $pull: { subscribers: { userId: uid } } });
+  // Obunachisi qolmagan buyurtmalarni tozalab tashlaymiz
+  await buyurtmaCollection.deleteOne({ _id: doc._id, subscribers: { $size: 0 } });
+  return true;
+}
+
+// mandat.uzbmb.uz vaqtincha bloklab qo'ysa (429/403), bot "orqaga chekinadi" —
+// keyingi urinishlarni ma'lum vaqtga to'xtatadi va har safar bloklansa,
+// kutish vaqtini 2 baravar oshiradi (eksponensial backoff), 30 daqiqagacha.
+const BUYURTMA_BACKOFF_BASE_MS = 60 * 1000; // 1 daqiqa
+const BUYURTMA_BACKOFF_MAX_MS = 30 * 60 * 1000; // 30 daqiqa
+let buyurtmaBackoffUntil = 0;
+let buyurtmaBackoffStreak = 0;
+
+function isRateLimitError(err) {
+  return err && (err.status === 429 || err.status === 403);
+}
+
+function triggerBuyurtmaBackoff() {
+  buyurtmaBackoffStreak += 1;
+  const waitMs = Math.min(BUYURTMA_BACKOFF_BASE_MS * 2 ** (buyurtmaBackoffStreak - 1), BUYURTMA_BACKOFF_MAX_MS);
+  buyurtmaBackoffUntil = Date.now() + waitMs;
+  console.warn(
+    `[BUYURTMA] mandat.uzbmb.uz cheklov qo'ydi (429/403). ${Math.round(waitMs / 1000)} soniyaga to'xtatildi (streak=${buyurtmaBackoffStreak}).`
+  );
+}
+
+// Bitta ID'ni mandat.uzbmb.uz'dan tekshiradi; natija topilsa — barcha
+// obunachilarga avtomatik yuboradi va buyurtmani ro'yxatdan o'chiradi.
+// Natija: 'ok' | 'not_ready' | 'blocked' — checkAllBuyurtmalar shuni ko'rib,
+// 'blocked' bo'lsa qolgan ID'larni ushbu aylanishda tekshirishni to'xtatadi.
+async function checkOneBuyurtma(doc) {
+  const entrantId = doc._id;
+  if (!doc.subscribers || !doc.subscribers.length) return 'ok';
+
+  let result = null;
+  try {
+    result = await fetchMandatById(entrantId);
+  } catch (err) {
+    if (isRateLimitError(err)) {
+      triggerBuyurtmaBackoff();
+      return 'blocked';
+    }
+    console.error(`[BUYURTMA] "${entrantId}" tekshirishda xatolik:`, err.message);
+    return 'ok'; // boshqa turdagi xatolik — keyingi aylanishda qayta urinib ko'ramiz
+  }
+
+  // Muvaffaqiyatli so'rov bo'ldi — backoff hisobini nolga qaytaramiz
+  buyurtmaBackoffStreak = 0;
+
+  if (!result || !result.name) return 'not_ready'; // natija hali e'lon qilinmagan — kutamiz
+
+  let rankInfo = null;
+  try {
+    rankInfo = await computeMandatIdRanking(result, entrantId);
+  } catch (err) {
+    rankInfo = null;
+  }
+
+  const baseText = formatMandatIdResult(result, entrantId, rankInfo);
+  const notifyText =
+    `<tg-emoji emoji-id=\"5260463209562776385\">⏰</tg-emoji> <b>Buyurtma qilgan natijangiz e'lon qilindi!</b>\n\n${baseText}`;
+
+  for (const sub of doc.subscribers) {
+    try {
+      await bot.sendMessage(sub.chatId, notifyText, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [backRow] },
+      });
+    } catch (err) {
+      console.error(`[BUYURTMA] "${entrantId}" uchun ${sub.chatId}ga yuborishda xatolik:`, err.message);
+    }
+  }
+
+  await buyurtmaCollection.deleteOne({ _id: entrantId });
+  return 'ok';
+}
+
+// Barcha faol buyurtmalarni ketma-ket (kichik pauzalar bilan) tekshirib chiqadi
+async function checkAllBuyurtmalar() {
+  if (!buyurtmaCollection) return;
+
+  if (Date.now() < buyurtmaBackoffUntil) {
+    const qoldi = Math.round((buyurtmaBackoffUntil - Date.now()) / 1000);
+    console.log(`[BUYURTMA] Backoff faol — ${qoldi} soniya kutilmoqda, bu aylanish o'tkazib yuborildi.`);
+    return;
+  }
+
+  const docs = await buyurtmaCollection.find({}).toArray();
+  if (!docs.length) return;
+
+  console.log(`[BUYURTMA] ${docs.length} ta buyurtma tekshirilmoqda...`);
+  for (const doc of docs) {
+    const status = await checkOneBuyurtma(doc);
+    if (status === 'blocked') break; // sayt cheklov qo'ydi — qolganlarini keyingi aylanishga qoldiramiz
+    await new Promise((r) => setTimeout(r, BUYURTMA_REQUEST_GAP_MS));
+  }
+}
+
+let buyurtmaPollTimer = null;
+function startBuyurtmaPolling() {
+  if (buyurtmaPollTimer) return;
+  if (!buyurtmaCollection) {
+    console.warn('[BUYURTMA] MongoDB ulanmagani uchun fon tekshiruvi ishga tushmadi.');
+    return;
+  }
+  buyurtmaPollTimer = setInterval(() => {
+    checkAllBuyurtmalar().catch((err) => console.error('[BUYURTMA] checkAllBuyurtmalar xatosi:', err.message));
+  }, BUYURTMA_POLL_INTERVAL_MS);
+  console.log(`[BUYURTMA] Fon tekshiruvi ishga tushdi (har ${Math.round(BUYURTMA_POLL_INTERVAL_MS / 1000)} soniyada).`);
+}
+
+// Foydalanuvchi hozir "Mandat buyurtma" uchun o'z ID'ini kiritishini kutayotgan bo'lsak, shu Set ichida turadi
+const awaitingBuyurtmaId = new Set();
+
+async function askForBuyurtmaId(chatId, userId) {
+  if (!buyurtmaCollection) {
+    try {
+      await bot.sendMessage(
+        chatId,
+        `<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> "Mandat buyurtma" hozircha mavjud emas (ma'lumotlar bazasi ulanmagan). Iltimos, keyinroq urinib ko'ring.`,
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+      );
+    } catch (err) {}
+    return;
+  }
+  awaitingBuyurtmaId.add(userId);
+  try {
+    await bot.sendMessage(
+      chatId,
+      `<tg-emoji emoji-id=\"5260463209562776385\">⏰</tg-emoji> <b>Mandat buyurtma</b>\n\n` +
+        `Natijalar hali e'lon qilinmagan bo'lsa ham, abituriyent ID raqamingizni (7 xonali) oldindan yozib qo'ying, masalan: <b>5506347</b>.\n\n` +
+        `Bot mandat.uzbmb.uz saytini fon rejimida kuzatib turadi va <b>natijangiz e'lon qilinishi bilanoq</b>, avtomatik ravishda shu yerga yuboradi — sizga qayta tekshirib turishning hojati yo'q.`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+    );
+  } catch (err) {
+    console.error("Mandat buyurtma so'rash xabari xatosi:", err.message);
+  }
+}
+
+async function buyurtmaScreen(userId) {
+  if (!buyurtmaCollection) {
+    const text =
+      `<tg-emoji emoji-id=\"5260463209562776385\">⏰</tg-emoji> <b>Mandat buyurtma</b>\n\n` +
+      `Hozircha bu bo'lim mavjud emas (ma'lumotlar bazasi ulanmagan).`;
+    return { text, keyboard: [backRow] };
+  }
+
+  const found = await findUserBuyurtma(userId);
+
+  if (!found) {
+    const text =
+      `<tg-emoji emoji-id=\"5260463209562776385\">⏰</tg-emoji> <b>Mandat buyurtma</b>\n\n` +
+      `Hozircha faol buyurtmangiz yo'q.\n\n` +
+      `Natijalar e'lon qilinishidan oldin ID raqamingizni buyurtma qilib qo'ysangiz, bot natija chiqishi bilanoq ` +
+      `avtomatik ravishda sizga xabar beradi.`;
+    const keyboard = [
+      [btn({ text: 'ID buyurtma qilish', callback_data: 'buyurtma_new', style: 'success', icon: EMOJI.clockIcon })],
+      backRow,
+    ];
+    return { text, keyboard };
+  }
+
+  const { entrantId, rec } = found;
+  const createdDate = rec.createdAt ? new Date(rec.createdAt) : null;
+  const createdStr = createdDate ? createdDate.toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' }) : "noma'lum";
+
+  const text =
+    `<tg-emoji emoji-id=\"5260463209562776385\">⏰</tg-emoji> <b>Mandat buyurtma</b>\n\n` +
+    `<tg-emoji emoji-id=\"6323600780783781848\">🆔</tg-emoji> Buyurtma qilingan ID: <b>${entrantId}</b>\n` +
+    `<tg-emoji emoji-id=\"5260463209562776385\">🕒</tg-emoji> Buyurtma vaqti: <i>${createdStr}</i>\n\n` +
+    `Natija e'lon qilinishi bilanoq, bot avtomatik ravishda shu yerga xabar yuboradi.`;
+
+  const keyboard = [
+    [btn({ text: 'Natijani hozir tekshirish', callback_data: 'buyurtma_check_now', style: 'primary', icon: EMOJI.searchIcon })],
+    [btn({ text: 'Buyurtmani bekor qilish', callback_data: 'buyurtma_cancel', style: 'danger', icon: EMOJI.crossIcon })],
+    backRow,
+  ];
+  return { text, keyboard };
 }
 
 // ---------------------------------------------------------------------------
@@ -1518,6 +1808,7 @@ function mainMenuScreen() {
     [btn({ text: 'Fanlar taqqoslash', callback_data: 'menu_compare', style: 'primary', icon: EMOJI.chartIcon })],
     [btn({ text: 'Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary', icon: EMOJI.listIcon })],
     [btn({ text: "Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger', icon: EMOJI.idIcon })],
+    [btn({ text: 'Mandat buyurtma', callback_data: 'menu_mandat_buyurtma', style: 'primary', icon: EMOJI.clockIcon })],
     [btn({ text: 'Biz haqimizda', callback_data: 'menu_about', style: 'success', icon: EMOJI.buildingIcon })],
   ];
 
@@ -4398,6 +4689,75 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "Mandat buyurtma" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
+  // umumiy SCREENS ro'yxatidan alohida ishlanadi)
+  if (query.data === 'menu_mandat_buyurtma') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    awaitingBuyurtmaId.delete(userId);
+    await deleteMessageSafe(chatId, messageId);
+    const { text, keyboard } = await buyurtmaScreen(userId);
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await safeSend(chatId, outText, outKeyboard);
+    return;
+  }
+
+  // "Mandat buyurtma" — yangi ID kiritishni so'raydi
+  if (query.data === 'buyurtma_new') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    await askForBuyurtmaId(chatId, userId);
+    return;
+  }
+
+  // "Mandat buyurtma" — foydalanuvchi kutmasdan, hoziroq natijani tekshirib ko'rmoqchi
+  if (query.data === 'buyurtma_check_now') {
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+
+    const found = await findUserBuyurtma(userId);
+    if (!found) {
+      const { text, keyboard } = await buyurtmaScreen(userId);
+      const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+      const outText = isGroup ? stripTgEmoji(text) : text;
+      await safeSend(chatId, outText, outKeyboard);
+      return;
+    }
+
+    await runMandatIdLookup(chatId, found.entrantId);
+    return;
+  }
+
+  // "Mandat buyurtma" — faol buyurtmani bekor qilish
+  if (query.data === 'buyurtma_cancel') {
+    await removeUserBuyurtma(userId);
+    try {
+      await bot.answerCallbackQuery(query.id, {
+        text: "<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Buyurtma bekor qilindi.",
+      });
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    await deleteMessageSafe(chatId, messageId);
+    const { text, keyboard } = await buyurtmaScreen(userId);
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await safeSend(chatId, outText, outKeyboard);
+    return;
+  }
+
   // "Mening 5 ta tanlovim" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
   // umumiy SCREENS ro'yxatidan alohida ishlanadi)
   if (query.data === 'menu_tanlov') {
@@ -4597,6 +4957,7 @@ bot.on('callback_query', async (query) => {
   yonalishResultsState.delete(userId);
   pendingBahoSelection.delete(userId);
   awaitingMandatId.delete(userId);
+  awaitingBuyurtmaId.delete(userId);
   awaitingKQCustomSubject.delete(userId);
   pendingKQSubject.delete(userId);
   pendingKQFilters.delete(userId);
@@ -4656,6 +5017,51 @@ bot.on('message', async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
+// "Mandat buyurtma" — foydalanuvchi natija e'lon qilinishidan OLDIN o'z ID
+// raqamini yozganda: hech qanday darhol qidiruv qilinmaydi, faqat ro'yxatga
+// ("buyurtma"ga) qo'shib qo'yiladi. Natija fon rejimida (checkAllBuyurtmalar)
+// tayyor bo'lganda avtomatik yuboriladi.
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  if (!awaitingBuyurtmaId.has(userId)) return;
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const entrantId = msg.text.trim();
+  if (!/^\d{7}$/.test(entrantId)) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, 7 xonali abituriyent ID raqamini to'g'ri kiriting (masalan: 5506347)."
+      );
+    } catch (err) {
+      console.error('Mandat buyurtma validatsiya xabari xatosi:', err.message);
+    }
+    return; // holat saqlanadi — qayta urinish mumkin
+  }
+
+  awaitingBuyurtmaId.delete(userId);
+  await setUserBuyurtma(userId, msg.chat.id, entrantId);
+
+  try {
+    await bot.sendMessage(
+      msg.chat.id,
+      `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> <b>${entrantId}</b> ID raqami buyurtmaga qabul qilindi!\n\n` +
+        `Natija e'lon qilinishi bilanoq, bot avtomatik ravishda shu yerga xabar yuboradi. ` +
+        `Buyurtmangizni "Mandat buyurtma" bo'limida ko'rishingiz yoki bekor qilishingiz mumkin.`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } }
+    );
+  } catch (err) {
+    console.error('Mandat buyurtma tasdiq xabari xatosi:', err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Bot buyruqlari
 // ---------------------------------------------------------------------------
 async function configureBot() {
@@ -4673,6 +5079,8 @@ async function configureBot() {
   } catch (err) {
     console.error('setMyCommands xatosi:', err.message);
   }
+
+  startBuyurtmaPolling();
 
   if (MINI_APP_URL) {
     try {
@@ -4725,5 +5133,6 @@ app.listen(PORT, async () => {
     console.warn("WEBHOOK_URL berilmagan — webhook o'rnatilmadi.");
   }
 
+  await connectMongo();
   await configureBot();
 });
