@@ -169,7 +169,13 @@ function computeViloyatStats() {
 const MANDAT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
 function decodeUzApostrophe(s) {
-  return String(s).replace(/&#x2018;|&#8216;|&rsquo;/g, "'").trim();
+  // Mandat2025 sahifasida &#x2018;/&#8216; dan tashqari &#x2BB; (turned comma,
+  // o'zbek tilida tez-tez ishlatiladi) va standart &#x27;/&#8217; kodlari ham
+  // uchraydi — barchasini oddiy apostrofga aylantiramiz.
+  return String(s)
+    .replace(/&#x2018;|&#8216;|&rsquo;|&#x2BB;|&#x2bb;|&#699;|&#x27;|&#39;|&#8217;|&rsquo;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .trim();
 }
 
 // hashId bo'yicha "Details" sahifasidan fanlar majmuasi/til/umumiy ball
@@ -240,7 +246,113 @@ async function fetchMandatById(entrantId) {
 // Foydalanuvchi hozir o'z abituriyent ID'ini kiritishini kutayotgan bo'lsak, shu Set ichida turadi
 const awaitingMandatId = new Set();
 
-function formatMandatIdResult(result, entrantId, rankInfo) {
+// ---------------------------------------------------------------------------
+// "Mandat2025" — sayt yangilanganidan keyingi YANGI bo'lim: /Bakalavr/Details
+// endi faqat test javoblarini ko'rsatadi, biroq QAYSI UNIVERSITETGA KIRGANI va
+// TANLAGAN 5 TA YO'NALISHNING har biri bo'yicha o'tish ballari endi shu YANGI
+// /Mandat2025/... yo'lida joylashgan. Ikkalasi HAR XIL hashId ishlatadi —
+// shuning uchun bu alohida, mustaqil fetch zanjiri.
+//
+// Kirish nuqtasi: /Mandat2025/MainSearch?entrantid=<ID>&lang=uz — bu yo'lda
+// natija to'g'ridan-to'g'ri "Details" ko'rinishida (m3-hero + jadval) chiqishi
+// yoki (Bakalavr'dagi kabi) kartochkalar ro'yxati sifatida chiqishi mumkin —
+// shuning uchun ikkala holat ham qo'llab-quvvatlanadi.
+// ---------------------------------------------------------------------------
+async function fetchMandat2025Result(entrantId) {
+  const url = `${'https://mandat.uzbmb.uz'}/Mandat2025/MainSearch?entrantid=${encodeURIComponent(entrantId)}&lang=uz`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': MANDAT_UA, 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+  });
+  if (!res.ok) {
+    const err = new Error(`mandat.uzbmb.uz Mandat2025/MainSearch ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  let html = await res.text();
+
+  // Agar bu allaqachon "Details" sahifasi bo'lmasa (ya'ni m3-hero yo'q bo'lsa),
+  // demak kartochkalar ro'yxati qaytgan — Bakalavr'dagiga o'xshab shu ID'ni
+  // topib, uning "Details?hashId=..." havolasini olishimiz kerak.
+  if (!/m3-hero/.test(html)) {
+    const idMarker = `# ${entrantId}`;
+    const idIdx = html.indexOf(idMarker);
+    if (idIdx === -1) return null; // shu ID bo'yicha Mandat2025'da natija topilmadi
+
+    const cardStart = html.lastIndexOf('m3-rescard', idIdx);
+    const win = html.slice(cardStart === -1 ? 0 : cardStart, idIdx + 3000);
+    const hashMatch = win.match(/Mandat2025\/Details\?hashId=([a-f0-9]+)/i) || win.match(/Details\?hashId=([a-f0-9]+)/i);
+    if (!hashMatch) return null;
+
+    const detRes = await fetch(`https://mandat.uzbmb.uz/Mandat2025/Details?hashId=${hashMatch[1]}`, {
+      headers: { 'User-Agent': MANDAT_UA },
+    });
+    if (!detRes.ok) return null;
+    html = await detRes.text();
+  }
+
+  const parsed = parseMandat2025DetailsHtml(html);
+
+  // Xavfsizlik: agar sahifadagi ID so'ralgan ID bilan mos kelmasa (masalan
+  // saytda keshlanish/sessiya muammosi bo'lsa), natijani ishonchsiz deb bekor
+  // qilamiz — noto'g'ri odamning ma'lumotini ko'rsatib qo'ymaslik uchun.
+  if (parsed && parsed.entrantId && parsed.entrantId !== String(entrantId)) {
+    console.warn(`[Mandat2025] ID mos kelmadi: so'ralgan ${entrantId}, sahifada ${parsed.entrantId}`);
+    return null;
+  }
+
+  return parsed;
+}
+
+// /Mandat2025/Details HTML'idan: ism, ID, til, umumiy ball, holat (grant/
+// kontrakt/rad etilgan) va tanlangan yo'nalishlar jadvalini ajratib oladi.
+function parseMandat2025DetailsHtml(html) {
+  const nameMatch = html.match(/m3-hero__name">([^<]+)</);
+  const idMatch = html.match(/ID:\s*<b>(\d+)</);
+  const tilMatch = html.match(/:\s*<b>([^<]*?)<\/b>\s*<\/p>\s*<span class="m3-hero__status/);
+  const scoreMatch = html.match(/m3-hero__score">\s*<b>([^<]+)</);
+  const statusMatch = html.match(/m3-hero__status[^>]*>(?:\s*<i[^>]*><\/i>)?\s*([^<]+?)\s*<\/span>/);
+  const heroClassMatch = html.match(/m3-hero\s+m3-hero--(\w+)/);
+
+  const rows = [];
+  const rowRegex = /<tr class="([^"]*)"[^>]*>([\s\S]*?)<\/tr>/g;
+  let rm;
+  while ((rm = rowRegex.exec(html))) {
+    const rowClass = rm[1];
+    const rowHtml = rm[2];
+    const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/g;
+    const cells = [];
+    let cm;
+    while ((cm = cellRegex.exec(rowHtml))) {
+      cells.push(cm[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim());
+    }
+    // Kamida: ketma-ketlik, OTM, yo'nalish, shakl, shifr, grant balli — 6 ta katak
+    if (cells.length < 6) continue;
+
+    rows.push({
+      priority: decodeUzApostrophe(cells[0]),
+      university: decodeUzApostrophe(cells[1]),
+      yonalish: decodeUzApostrophe(cells[2]),
+      shakl: decodeUzApostrophe(cells[3]),
+      shifr: decodeUzApostrophe(cells[4]),
+      grantBall: decodeUzApostrophe(cells[5]),
+      kontraktBall: cells[6] !== undefined ? decodeUzApostrophe(cells[6]) : null,
+      isGrant: /table-success/.test(rowClass),
+      isContract: /table-warning/.test(rowClass),
+    });
+  }
+
+  return {
+    name: nameMatch ? decodeUzApostrophe(nameMatch[1]) : null,
+    entrantId: idMatch ? idMatch[1] : null,
+    til: tilMatch ? decodeUzApostrophe(tilMatch[1]) : null,
+    scoreText: scoreMatch ? decodeUzApostrophe(scoreMatch[1]) : null,
+    status: statusMatch ? decodeUzApostrophe(statusMatch[1]) : null,
+    heroType: heroClassMatch ? heroClassMatch[1] : null, // 'grant' | 'contract' | 'rejected' | ...
+    rows,
+  };
+}
+
+function formatMandatIdResult(result, entrantId, rankInfo, mandat2025) {
   if (!result || !result.name) {
     return (
       `<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> <b>${entrantId}</b> ID raqami bo'yicha natija topilmadi.\n\n` +
@@ -267,6 +379,28 @@ function formatMandatIdResult(result, entrantId, rankInfo) {
     if (comboLine) {
       text += `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> Topilgan yo'nalish: <b>${comboLine}${subjects.til ? ` + ${subjects.til}` : ''}</b>\n`;
     }
+  }
+
+  // Mandat2025: qaysi universitetga kirgani + tanlagan yo'nalishlarning har
+  // birining o'tish ballari (grant/kontrakt) — endi saytning o'zida shu
+  // ko'rinishda chiqadigan bo'lgani uchun, bot ham xuddi shunday ko'rsatadi.
+  if (mandat2025 && mandat2025.rows && mandat2025.rows.length) {
+    if (mandat2025.status) {
+      const isGrant = mandat2025.heroType === 'grant' || /grant/i.test(mandat2025.status);
+      const isRejected = mandat2025.heroType === 'rejected' || /tavsiya etilmadi|rad etil/i.test(mandat2025.status);
+      const statusIcon = isRejected ? '❌' : isGrant ? '🏆' : '✅';
+      text += `\n${statusIcon} <b>Holat:</b> ${mandat2025.status}\n`;
+    }
+
+    text += `\n<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> <b>Tanlangan yo'nalishlar (${mandat2025.rows.length} ta):</b>\n`;
+    mandat2025.rows.forEach((r, i) => {
+      const markIcon = r.isGrant ? '🏆' : r.isContract ? '✅' : '▫️';
+      const markLabel = r.isGrant ? ' — Davlat granti asosida qabul' : r.isContract ? ' — To\'lov-kontrakt asosida qabul' : '';
+      text +=
+        `\n${markIcon} <b>${i + 1}. ${r.university}</b>\n` +
+        `   ${r.yonalish} (${r.shakl})\n` +
+        `   O'tish balli — Grant: <b>${r.grantBall}</b>${r.kontraktBall ? `, Kontrakt: <b>${r.kontraktBall}</b>` : ''}${markLabel}\n`;
+    });
   }
 
   text += `\n@talimtalababot — orqali o'z o'rningizni aniqlang`;
@@ -753,6 +887,7 @@ async function runMandatIdLookup(chatId, entrantId) {
   }
 
   let rankInfo = null;
+  let mandat2025 = null;
   if (result && result.name) {
     if (thinkingMsgId) {
       try {
@@ -763,10 +898,23 @@ async function runMandatIdLookup(chatId, entrantId) {
         });
       } catch (err) {}
     }
-    rankInfo = await computeMandatIdRanking(result, entrantId);
+    // Ikkalasi bir vaqtda (parallel) so'raladi — biri sekinlashsa ham
+    // ikkinchisini kutib turmaydi. Mandat2025 xato bersa ham asosiy natija
+    // (ism/ball/reyting) baribir ko'rsatiladi — faqat yo'nalishlar jadvali
+    // qo'shilmay qoladi.
+    const [rankResult, mandat2025Result] = await Promise.allSettled([
+      computeMandatIdRanking(result, entrantId),
+      fetchMandat2025Result(entrantId),
+    ]);
+    rankInfo = rankResult.status === 'fulfilled' ? rankResult.value : null;
+    if (mandat2025Result.status === 'fulfilled') {
+      mandat2025 = mandat2025Result.value;
+    } else {
+      console.error('Mandat2025 natijasini olishda xatolik:', mandat2025Result.reason && mandat2025Result.reason.message);
+    }
   }
 
-  const resultText = formatMandatIdResult(result, entrantId, rankInfo);
+  const resultText = formatMandatIdResult(result, entrantId, rankInfo, mandat2025);
   const sendOptions = { parse_mode: 'HTML', reply_markup: { inline_keyboard: [backRow] } };
 
   if (thinkingMsgId) {
@@ -1026,13 +1174,19 @@ async function checkOneBuyurtma(doc) {
   if (!result || !result.name) return 'not_ready'; // natija hali e'lon qilinmagan — kutamiz
 
   let rankInfo = null;
-  try {
-    rankInfo = await computeMandatIdRanking(result, entrantId);
-  } catch (err) {
-    rankInfo = null;
+  let mandat2025 = null;
+  const [rankResult, mandat2025Result] = await Promise.allSettled([
+    computeMandatIdRanking(result, entrantId),
+    fetchMandat2025Result(entrantId),
+  ]);
+  rankInfo = rankResult.status === 'fulfilled' ? rankResult.value : null;
+  if (mandat2025Result.status === 'fulfilled') {
+    mandat2025 = mandat2025Result.value;
+  } else {
+    console.error(`[BUYURTMA] "${entrantId}" uchun Mandat2025 olishda xatolik:`, mandat2025Result.reason && mandat2025Result.reason.message);
   }
 
-  const baseText = formatMandatIdResult(result, entrantId, rankInfo);
+  const baseText = formatMandatIdResult(result, entrantId, rankInfo, mandat2025);
   const notifyText =
     `<tg-emoji emoji-id=\"5260463209562776385\">⏰</tg-emoji> <b>Buyurtma qilgan natijangiz e'lon qilindi!</b>\n\n${baseText}`;
 
