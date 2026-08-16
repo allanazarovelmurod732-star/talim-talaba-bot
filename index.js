@@ -158,6 +158,18 @@ function computeViloyatStats() {
   return result;
 }
 
+// Berilgan viloyat nomiga tegishli barcha yo'nalishlarni (YONALISH_FLAT
+// ichidan) topib, grant balli bo'yicha kamayish tartibida qaytaradi.
+function getYonalishlarByViloyat(viloyatNomi) {
+  const items = YONALISH_FLAT.filter((item) => detectViloyat(item.otm) === viloyatNomi);
+  items.sort((a, b) => {
+    const diff = parseBallForSort(b.grantBall) - parseBallForSort(a.grantBall);
+    if (diff !== 0) return diff;
+    return parseBallForSort(b.kontraktBall) - parseBallForSort(a.kontraktBall);
+  });
+  return items;
+}
+
 // ---------------------------------------------------------------------------
 // "Natijamni tekshirish (ID)" — foydalanuvchi yuborgan BITTA abituriyent ID'i
 // uchun, jonli ravishda (hech qanday oldindan yig'ilgan baza ISHLATMASDAN)
@@ -167,6 +179,10 @@ function computeViloyatStats() {
 // qilishning aynan o'zi, faqat Telegram orqali.
 // ---------------------------------------------------------------------------
 const MANDAT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function decodeUzApostrophe(s) {
   // Mandat2025 sahifasida &#x2018;/&#8216; dan tashqari &#x2BB; (turned comma,
@@ -2851,7 +2867,7 @@ function viloyatStatMainScreen() {
   return { text, keyboard };
 }
 
-function viloyatStatDetailScreen(rec) {
+function viloyatStatDetailScreen(rec, index) {
   const text =
     `${emoji(EMOJI.globeIcon, '🗺')} <b>${rec.viloyat}</b>\n\n` +
     `${emoji(EMOJI.buildingIcon, '🏫')} OTMlar soni: <b>${fmtSon(rec.universitetlarSoni)}</b>\n` +
@@ -2865,9 +2881,72 @@ function viloyatStatDetailScreen(rec) {
     YONALISH_YIL_ESLATMASI;
 
   const keyboard = [
+    [btn({
+      text: `Barcha ${fmtSon(rec.yonalishlarSoni)} ta yo'nalishni ko'rish`,
+      callback_data: `vy_list_${index}`,
+      style: 'primary',
+      icon: EMOJI.booksIcon,
+    })],
     [btn({ text: 'Viloyatlar ro\'yxatiga qaytish', callback_data: 'menu_viloyat_stat', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
+
+  return { text, keyboard };
+}
+
+// ---------------------------------------------------------------------------
+// "Viloyat bo'yicha BARCHA yo'nalishlar" — viloyatStatDetailScreen'dagi
+// tugma orqali, tanlangan viloyatdagi HAR BIR yo'nalishning o'zi (universitet,
+// yo'nalish, til, shakl, grant/kontrakt o'tish balli va kvotasi) sahifalab
+// ko'rsatiladi — foydalanuvchi ball kiritishi shart emas, shunchaki ro'yxatni
+// ko'rib chiqadi (ball kerak bo'lsa "Mandat tanlash" bo'limi bor).
+// ---------------------------------------------------------------------------
+const VILOYAT_YONALISH_PAGE_SIZE = 6;
+
+// userId -> { viloyat, statIndex, items, page }
+const viloyatYonalishState = new Map();
+
+function parseBallForSort(v) {
+  const n = v !== undefined && v !== null && v !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : -Infinity;
+}
+
+function formatViloyatYonalishLine(r, num) {
+  return (
+    `<b>${num}.</b> <tg-emoji emoji-id=\"5233623301800093885\">🏫</tg-emoji> <b>${r.otm}</b>\n` +
+    `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
+    `<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
+    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota`
+  );
+}
+
+function renderViloyatYonalishPage(userId) {
+  const state = viloyatYonalishState.get(userId);
+  if (!state) return null;
+
+  const { viloyat, items } = state;
+  const totalPages = Math.max(1, Math.ceil(items.length / VILOYAT_YONALISH_PAGE_SIZE));
+  const page = Math.min(Math.max(state.page, 0), totalPages - 1);
+  state.page = page;
+
+  const start = page * VILOYAT_YONALISH_PAGE_SIZE;
+  const pageItems = items.slice(start, start + VILOYAT_YONALISH_PAGE_SIZE);
+
+  const header =
+    `${emoji(EMOJI.globeIcon, '🗺')} <b>${viloyat}</b> — barcha yo'nalishlar\n\n` +
+    `Jami: <b>${items.length}</b> ta yo'nalish (${page + 1}/${totalPages}-sahifa), grant balli bo'yicha kamayish tartibida.\n\n`;
+
+  const body = pageItems.map((r, i) => formatViloyatYonalishLine(r, start + i + 1)).join('\n\n');
+  const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
+
+  const keyboard = [];
+  const navRow = [];
+  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'vy_page_prev', style: 'primary', icon: EMOJI.backIcon }));
+  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'vy_page_next', style: 'primary', icon: EMOJI.nextIcon }));
+  if (navRow.length) keyboard.push(navRow);
+
+  keyboard.push([btn({ text: `${viloyat}ga qaytish`, callback_data: `vy_back_${state.statIndex}`, style: 'success', icon: EMOJI.backIcon })]);
+  keyboard.push(backRow);
 
   return { text, keyboard };
 }
@@ -3044,6 +3123,242 @@ bot.onText(/^\/id/, async (msg) => {
   } catch (err) {
     console.error('/id buyrug\'i xatosi:', err.message);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Admin uchun: "/yangila" — mandat.uzbmb.uz saytining YANGI (/Mandat2025/...)
+// bo'limidan jonli o'tish ballarini yig'ib, DATA_DIR/yonalishlar.json
+// faylini yangilaydi. Botning O'ZI ICHIDA (bir xil jarayon, bir xil disk)
+// ishlaydi — shuning uchun Render'da alohida Cron Job/Worker xizmati va
+// disk ulashish muammosi UMUMAN kerak emas.
+//
+// Ishlatilishi:
+//   /yangila                                — barcha fanlar/tillar bo'yicha to'liq yangilash
+//   /yangila Matematika + Fizika             — faqat shu fanlar majmuasi (barcha tillarda)
+//   /yangila Matematika + Fizika | 1         — faqat shu fanlar majmuasi + shu til (edLangId)
+//
+// Bir vaqtning o'zida faqat BITTA yig'uv jarayoni ishlashi mumkin.
+// ---------------------------------------------------------------------------
+let mandat2025CrawlRunning = false;
+
+function crawlMatchKey(otm, nomi, shakl) {
+  return `${normalizeText(otm)}|${normalizeText(nomi)}|${normalizeText(shakl)}`;
+}
+
+async function runMandat2025Crawl(options, onProgress) {
+  const { delayMs = 400, maxPagesPerCombo = 300, onlySubject = null, onlyLangId = null, dryRun = false } = options || {};
+
+  if (mandat2025CrawlRunning) {
+    throw new Error("Yig'uv jarayoni allaqachon ishlamoqda — avval shu tugashini kuting.");
+  }
+  mandat2025CrawlRunning = true;
+
+  try {
+    const raw = fs.readFileSync(YONALISH_DB_PATH, 'utf8');
+    const universitetlar = JSON.parse(raw);
+
+    const idx = new Map();
+    universitetlar.forEach((uni, uniIdx) => {
+      (uni.yonalishlar || []).forEach((y, yIdx) => {
+        idx.set(crawlMatchKey(uni.nomi, y.nomi, y.talimShakli), { uniIdx, yIdx, refreshed: false });
+      });
+    });
+
+    const discoveredNew = [];
+    let totalRequests = 0;
+    let totalUpdated = 0;
+
+    const subjectsToRun = onlySubject ? [onlySubject] : MANDAT_SUBJECT_OPTIONS;
+    const allLangIds = Object.values(KQ_LANG_LABELS).map((l) => l.edLangId);
+    const langsToRun = onlyLangId ? [onlyLangId] : allLangIds;
+
+    for (const subject of subjectsToRun) {
+      const targetKeys = [];
+      universitetlar.forEach((uni) => {
+        (uni.yonalishlar || []).forEach((y) => {
+          if (subjectMatches(y.fanlar, subject)) targetKeys.push(crawlMatchKey(uni.nomi, y.nomi, y.talimShakli));
+        });
+      });
+      const targetSet = new Set(targetKeys);
+      if (!targetSet.size) continue;
+
+      const [s4subject, s5subject] = subject.split('+').map((p) => p.trim());
+
+      for (const edLangId of langsToRun) {
+        for (let page = 1; page <= maxPagesPerCombo; page++) {
+          let cards;
+          try {
+            totalRequests++;
+            cards = await fetchKengaytirilganPage(s4subject, s5subject, edLangId, page);
+          } catch (err) {
+            console.error(`[CRAWL] "${subject}" sahifa ${page} xatosi:`, err.message);
+            break;
+          }
+          await sleep(delayMs);
+          if (!cards.length) break;
+
+          for (const card of cards) {
+            let result = null;
+            try {
+              totalRequests++;
+              result = await fetchMandat2025Result(card.id);
+            } catch (err) {
+              result = null;
+            }
+            await sleep(delayMs);
+
+            if (result && result.rows && result.rows.length) {
+              for (const row of result.rows) {
+                const key = crawlMatchKey(row.university, row.yonalish, row.shakl);
+                const rec = idx.get(key);
+                if (rec) {
+                  const uni = universitetlar[rec.uniIdx];
+                  const y = uni.yonalishlar[rec.yIdx];
+                  const changed =
+                    String(y.grantBall || '') !== String(row.grantBall || '') ||
+                    String(y.kontraktBall || '') !== String(row.kontraktBall || '');
+                  if (changed) totalUpdated++;
+                  y.grantBall = row.grantBall || y.grantBall;
+                  y.kontraktBall = row.kontraktBall || y.kontraktBall;
+                  if (row.shifr) y.shifr = row.shifr;
+                  y._oxirgiYangilanish = new Date().toISOString();
+                  if (!rec.refreshed) rec.refreshed = true;
+                } else {
+                  discoveredNew.push({
+                    otm: row.university,
+                    nomi: row.yonalish,
+                    talimShakli: row.shakl,
+                    til: result.til || null,
+                    shifr: row.shifr || null,
+                    grantBall: row.grantBall || null,
+                    kontraktBall: row.kontraktBall || null,
+                    grantKvota: null,
+                    kontraktKvota: null,
+                    fanlar: subject.split('+').map((s) => s.trim()),
+                    _manba: 'crawl-mandat2025',
+                    _topilganSana: new Date().toISOString(),
+                  });
+                }
+              }
+            }
+          }
+
+          const done = [...targetSet].filter((k) => idx.get(k).refreshed).length;
+          if (onProgress) {
+            try {
+              await onProgress({ subject, edLangId, page, done, target: targetSet.size, totalRequests, totalUpdated });
+            } catch (err) {}
+          }
+          if (done >= targetSet.size) break;
+        }
+      }
+    }
+
+    if (!dryRun) {
+      try {
+        fs.copyFileSync(YONALISH_DB_PATH, `${YONALISH_DB_PATH}.bak.${Date.now()}`);
+      } catch (err) {
+        console.error('[CRAWL] Zaxira nusxa olishda xatolik:', err.message);
+      }
+      fs.writeFileSync(YONALISH_DB_PATH, JSON.stringify(universitetlar, null, 2), 'utf8');
+
+      if (discoveredNew.length) {
+        const reviewPath = path.join(DATA_DIR, 'yangi_yonalishlar_review.json');
+        let existing = [];
+        try {
+          existing = JSON.parse(fs.readFileSync(reviewPath, 'utf8'));
+        } catch (err) {
+          existing = [];
+        }
+        const seen = new Set(existing.map((it) => crawlMatchKey(it.otm, it.nomi, it.talimShakli)));
+        for (const item of discoveredNew) {
+          const k = crawlMatchKey(item.otm, item.nomi, item.talimShakli);
+          if (!seen.has(k)) {
+            seen.add(k);
+            existing.push(item);
+          }
+        }
+        fs.writeFileSync(reviewPath, JSON.stringify(existing, null, 2), 'utf8');
+      }
+
+      loadYonalishDb(); // xotiradagi YONALISH_FLAT'ni darhol yangilaymiz — bot qayta ishga tushishi shart emas
+    }
+
+    return { totalRequests, totalUpdated, discoveredNewCount: discoveredNew.length };
+  } finally {
+    mandat2025CrawlRunning = false;
+  }
+}
+
+bot.onText(/^\/yangila(?:\s+([\s\S]+))?/, async (msg, match) => {
+  if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+
+  if (mandat2025CrawlRunning) {
+    try {
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Yig'uv jarayoni allaqachon ishlamoqda, tugashini kuting.", { parse_mode: 'HTML' });
+    } catch (err) {}
+    return;
+  }
+
+  let onlySubject = null;
+  let onlyLangId = null;
+  const arg = (match && match[1] || '').trim();
+  if (arg) {
+    const [subjectPart, langPart] = arg.split('|').map((p) => p.trim());
+    onlySubject = subjectPart || null;
+    if (langPart) onlyLangId = parseInt(langPart, 10) || null;
+  }
+
+  let statusMsgId = null;
+  try {
+    const statusMsg = await bot.sendMessage(
+      msg.chat.id,
+      `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> Mandat2025 ma'lumotlarini yig'ish boshlandi${onlySubject ? ` (${onlySubject}${onlyLangId ? `, til: ${onlyLangId}` : ''})` : ' (BARCHA fanlar/tillar bo\'yicha — uzoq davom etishi mumkin)'}...`,
+      { parse_mode: 'HTML' }
+    );
+    statusMsgId = statusMsg.message_id;
+  } catch (err) {
+    console.error("/yangila boshlanish xabari xatosi:", err.message);
+  }
+
+  let lastEditAt = 0;
+  runMandat2025Crawl(
+    { onlySubject, onlyLangId },
+    async ({ subject, edLangId, page, done, target, totalRequests, totalUpdated }) => {
+      const now = Date.now();
+      if (now - lastEditAt < 4000 || !statusMsgId) return; // Telegram'ni ortiqcha tahrirlab yubormaslik uchun
+      lastEditAt = now;
+      try {
+        await bot.editMessageText(
+          `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> Yig'ilmoqda...\n\n` +
+            `Hozirgi: <b>${subject}</b> (til: ${edLangId}), sahifa ${page}\n` +
+            `Shu kombinatsiyada: ${done}/${target} yo'nalish yangilandi\n` +
+            `Jami so'rovlar: ${totalRequests}, jami o'zgargan: ${totalUpdated}`,
+          { chat_id: msg.chat.id, message_id: statusMsgId, parse_mode: 'HTML' }
+        );
+      } catch (err) {}
+    }
+  )
+    .then(async (res) => {
+      try {
+        await bot.sendMessage(
+          msg.chat.id,
+          `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Yig'uv tugadi.\n\n` +
+            `Jami so'rovlar: <b>${res.totalRequests}</b>\n` +
+            `O'zgargan yo'nalishlar: <b>${res.totalUpdated}</b>\n` +
+            `Bazada yo'q, yangi topilgan (review'da): <b>${res.discoveredNewCount}</b>`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (err) {
+        console.error("/yangila yakun xabari xatosi:", err.message);
+      }
+    })
+    .catch(async (err) => {
+      console.error('[CRAWL] Xatolik:', err.message);
+      try {
+        await bot.sendMessage(msg.chat.id, `<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Xatolik: ${err.message}`, { parse_mode: 'HTML' });
+      } catch (e) {}
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -5054,7 +5369,82 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    const { text, keyboard } = viloyatStatDetailScreen(rec);
+    const { text, keyboard } = viloyatStatDetailScreen(rec, index);
+    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+    const outText = isGroup ? stripTgEmoji(text) : text;
+    await safeSend(chatId, outText, outKeyboard);
+    return;
+  }
+
+  // "Viloyat statistikasi" — tanlangan viloyatdagi BARCHA yo'nalishlarni
+  // (ball so'ramasdan) sahifalab ko'rsatish
+  if (query.data && query.data.startsWith('vy_list_')) {
+    const index = parseInt(query.data.replace('vy_list_', ''), 10);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const stats = computeViloyatStats();
+    const rec = stats[index];
+    if (!rec) {
+      await deleteMessageSafe(chatId, messageId);
+      await safeSend(chatId, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Ma'lumot topilmadi, qaytadan urinib ko'ring.", [backRow]);
+      return;
+    }
+
+    const items = getYonalishlarByViloyat(rec.viloyat);
+    viloyatYonalishState.set(userId, { viloyat: rec.viloyat, statIndex: index, items, page: 0 });
+
+    const rendered = renderViloyatYonalishPage(userId);
+    await deleteMessageSafe(chatId, messageId);
+    if (rendered) {
+      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
+      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
+      await safeSend(chatId, outText, outKeyboard);
+    }
+    return;
+  }
+
+  // "Viloyat bo'yicha yo'nalishlar" — sahifalash (Keyingisi/Oldingisi)
+  if (query.data === 'vy_page_next' || query.data === 'vy_page_prev') {
+    const state = viloyatYonalishState.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!state) return;
+
+    state.page += query.data === 'vy_page_next' ? 1 : -1;
+    const rendered = renderViloyatYonalishPage(userId);
+    if (rendered) {
+      await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
+    }
+    return;
+  }
+
+  // "Viloyat bo'yicha yo'nalishlar" ro'yxatidan viloyat statistikasi
+  // ekraniga qaytish
+  if (query.data && query.data.startsWith('vy_back_')) {
+    const index = parseInt(query.data.replace('vy_back_', ''), 10);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    viloyatYonalishState.delete(userId);
+
+    const stats = computeViloyatStats();
+    const rec = stats[index];
+    await deleteMessageSafe(chatId, messageId);
+    if (!rec) {
+      await safeSend(chatId, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Ma'lumot topilmadi, qaytadan urinib ko'ring.", [backRow]);
+      return;
+    }
+
+    const { text, keyboard } = viloyatStatDetailScreen(rec, index);
     const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
     const outText = isGroup ? stripTgEmoji(text) : text;
     await safeSend(chatId, outText, outKeyboard);
@@ -5109,6 +5499,7 @@ bot.on('callback_query', async (query) => {
   pendingYonalishShakl.delete(userId);
   pendingYonalishQabulTuri.delete(userId);
   yonalishResultsState.delete(userId);
+  viloyatYonalishState.delete(userId);
   pendingBahoSelection.delete(userId);
   awaitingMandatId.delete(userId);
   awaitingBuyurtmaId.delete(userId);
@@ -5289,4 +5680,22 @@ app.listen(PORT, async () => {
 
   await connectMongo();
   await configureBot();
+
+  // ---------------------------------------------------------------------------
+  // MANDAT2025_AUTO_CRAWL=1 bo'lsa, yonalishlar.json botning O'ZI ICHIDA
+  // (bir xil jarayon/disk, Render'da alohida Cron Job/Disk kerak bo'lmasdan)
+  // har MANDAT2025_CRAWL_INTERVAL_HOURS soatda avtomatik yangilanadi.
+  // Standart: o'chiq — faqat admin "/yangila" bilan qo'lda ishga tushiradi.
+  // ---------------------------------------------------------------------------
+  if (process.env.MANDAT2025_AUTO_CRAWL === '1') {
+    const intervalHours = Number(process.env.MANDAT2025_CRAWL_INTERVAL_HOURS) || 24;
+    console.log(`[CRAWL] Avtomatik yig'uv yoqilgan — har ${intervalHours} soatda ishga tushadi.`);
+    setInterval(() => {
+      if (mandat2025CrawlRunning) return;
+      console.log('[CRAWL] Avtomatik yig\'uv boshlandi...');
+      runMandat2025Crawl({}, null)
+        .then((res) => console.log(`[CRAWL] Avtomatik yig'uv tugadi: ${JSON.stringify(res)}`))
+        .catch((err) => console.error('[CRAWL] Avtomatik yig\'uv xatosi:', err.message));
+    }, intervalHours * 60 * 60 * 1000);
+  }
 });
