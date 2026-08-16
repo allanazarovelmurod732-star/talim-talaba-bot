@@ -2882,6 +2882,12 @@ function viloyatStatDetailScreen(rec, index) {
 
   const keyboard = [
     [btn({
+      text: `Universitetlar bo'yicha ko'rish (${fmtSon(rec.universitetlarSoni)} ta OTM)`,
+      callback_data: `vuni_list_${index}`,
+      style: 'success',
+      icon: EMOJI.buildingIcon,
+    })],
+    [btn({
       text: `Barcha ${fmtSon(rec.yonalishlarSoni)} ta yo'nalishni ko'rish`,
       callback_data: `vy_list_${index}`,
       style: 'primary',
@@ -2890,6 +2896,108 @@ function viloyatStatDetailScreen(rec, index) {
     [btn({ text: 'Viloyatlar ro\'yxatiga qaytish', callback_data: 'menu_viloyat_stat', style: 'success', icon: EMOJI.backIcon })],
     backRow,
   ];
+
+  return { text, keyboard };
+}
+
+// ---------------------------------------------------------------------------
+// "Viloyat -> Universitetlar ro'yxati -> bitta universitetning yo'nalishlari"
+// Foydalanuvchi avval viloyatni, keyin o'sha viloyatdagi universitetlardan
+// birini tanlaydi va faqat O'SHA universitetning barcha yo'nalishlari
+// (til, shakl, grant/kontrakt o'tish balli va kvotasi) ko'rsatiladi.
+// ---------------------------------------------------------------------------
+const VILOYAT_UNI_PAGE_SIZE = 8;
+const UNI_YONALISH_PAGE_SIZE = 6;
+
+// userId -> { viloyat, statIndex, unis, page }
+const viloyatUniState = new Map();
+// userId -> { viloyat, statIndex, uniIdx, otm, items, page }
+const uniYonalishState = new Map();
+
+// Berilgan viloyatdagi universitetlarni (nomi + yo'nalishlar soni) qaytaradi,
+// alifbo tartibida — bu tartib sahifalash/callback indekslari uchun barqaror bo'lishi kerak
+function getUniversitiesInViloyat(viloyatNomi) {
+  const map = new Map();
+  for (const item of YONALISH_FLAT) {
+    if (detectViloyat(item.otm) !== viloyatNomi) continue;
+    map.set(item.otm, (map.get(item.otm) || 0) + 1);
+  }
+  return [...map.entries()]
+    .map(([otm, yonalishSoni]) => ({ otm, yonalishSoni }))
+    .sort((a, b) => a.otm.localeCompare(b.otm, 'uz'));
+}
+
+function renderViloyatUniPage(userId) {
+  const state = viloyatUniState.get(userId);
+  if (!state) return null;
+
+  const { viloyat, unis, statIndex } = state;
+  const totalPages = Math.max(1, Math.ceil(unis.length / VILOYAT_UNI_PAGE_SIZE));
+  const page = Math.min(Math.max(state.page, 0), totalPages - 1);
+  state.page = page;
+
+  const start = page * VILOYAT_UNI_PAGE_SIZE;
+  const pageItems = unis.slice(start, start + VILOYAT_UNI_PAGE_SIZE);
+
+  const text =
+    `${emoji(EMOJI.globeIcon, '🗺')} <b>${viloyat}</b> — universitetlar\n\n` +
+    `Jami: <b>${unis.length}</b> ta OTM (${page + 1}/${totalPages}-sahifa). Universitetni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
+
+  const keyboard = pageItems.map((u, i) => [
+    btn({
+      text: `${u.otm} — ${u.yonalishSoni} ta yo'nalish`,
+      callback_data: `vuni_${statIndex}_${start + i}`,
+      style: 'primary',
+      icon: EMOJI.buildingIcon,
+    }),
+  ]);
+
+  const navRow = [];
+  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'vuni_page_prev', style: 'primary', icon: EMOJI.backIcon }));
+  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'vuni_page_next', style: 'primary', icon: EMOJI.nextIcon }));
+  if (navRow.length) keyboard.push(navRow);
+
+  keyboard.push([btn({ text: `${viloyat}ga qaytish`, callback_data: `vy_back_${statIndex}`, style: 'success', icon: EMOJI.backIcon })]);
+  keyboard.push(backRow);
+
+  return { text, keyboard };
+}
+
+function formatUniYonalishLine(r, num) {
+  return (
+    `<b>${num}.</b> <tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
+    `<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
+    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota`
+  );
+}
+
+function renderUniYonalishPage(userId) {
+  const state = uniYonalishState.get(userId);
+  if (!state) return null;
+
+  const { otm, items, statIndex } = state;
+  const totalPages = Math.max(1, Math.ceil(items.length / UNI_YONALISH_PAGE_SIZE));
+  const page = Math.min(Math.max(state.page, 0), totalPages - 1);
+  state.page = page;
+
+  const start = page * UNI_YONALISH_PAGE_SIZE;
+  const pageItems = items.slice(start, start + UNI_YONALISH_PAGE_SIZE);
+
+  const header =
+    `${emoji(EMOJI.buildingIcon, '🏫')} <b>${otm}</b>\n\n` +
+    `Jami: <b>${items.length}</b> ta yo'nalish (${page + 1}/${totalPages}-sahifa), grant balli bo'yicha kamayish tartibida.\n\n`;
+
+  const body = pageItems.map((r, i) => formatUniYonalishLine(r, start + i + 1)).join('\n\n');
+  const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
+
+  const keyboard = [];
+  const navRow = [];
+  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'vuy_page_prev', style: 'primary', icon: EMOJI.backIcon }));
+  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'vuy_page_next', style: 'primary', icon: EMOJI.nextIcon }));
+  if (navRow.length) keyboard.push(navRow);
+
+  keyboard.push([btn({ text: 'Universitetlar ro\'yxatiga qaytish', callback_data: `vuni_list_${statIndex}`, style: 'success', icon: EMOJI.backIcon })]);
+  keyboard.push(backRow);
 
   return { text, keyboard };
 }
@@ -5435,6 +5543,8 @@ bot.on('callback_query', async (query) => {
       console.error('answerCallbackQuery xatosi:', err.message);
     }
     viloyatYonalishState.delete(userId);
+    viloyatUniState.delete(userId);
+    uniYonalishState.delete(userId);
 
     const stats = computeViloyatStats();
     const rec = stats[index];
@@ -5448,6 +5558,108 @@ bot.on('callback_query', async (query) => {
     const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
     const outText = isGroup ? stripTgEmoji(text) : text;
     await safeSend(chatId, outText, outKeyboard);
+    return;
+  }
+
+  // "Universitetlar bo'yicha ko'rish" — tanlangan viloyatdagi universitetlar ro'yxati
+  if (query.data && query.data.startsWith('vuni_list_')) {
+    const index = parseInt(query.data.replace('vuni_list_', ''), 10);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const stats = computeViloyatStats();
+    const rec = stats[index];
+    if (!rec) {
+      await deleteMessageSafe(chatId, messageId);
+      await safeSend(chatId, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Ma'lumot topilmadi, qaytadan urinib ko'ring.", [backRow]);
+      return;
+    }
+
+    const unis = getUniversitiesInViloyat(rec.viloyat);
+    viloyatUniState.set(userId, { viloyat: rec.viloyat, statIndex: index, unis, page: 0 });
+    uniYonalishState.delete(userId);
+
+    const rendered = renderViloyatUniPage(userId);
+    await deleteMessageSafe(chatId, messageId);
+    if (rendered) {
+      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
+      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
+      await safeSend(chatId, outText, outKeyboard);
+    }
+    return;
+  }
+
+  // "Universitetlar ro'yxati" — sahifalash (Keyingisi/Oldingisi)
+  if (query.data === 'vuni_page_next' || query.data === 'vuni_page_prev') {
+    const state = viloyatUniState.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!state) return;
+
+    state.page += query.data === 'vuni_page_next' ? 1 : -1;
+    const rendered = renderViloyatUniPage(userId);
+    if (rendered) {
+      await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
+    }
+    return;
+  }
+
+  // Universitetlar ro'yxatidan bitta universitet tanlandi — shu OTM'ning
+  // barcha yo'nalishlari (til, shakl, grant/kontrakt o'tish balli) ko'rsatiladi
+  if (query.data && /^vuni_\d+_\d+$/.test(query.data || '')) {
+    const [, statIndexStr, uniIdxStr] = query.data.match(/^vuni_(\d+)_(\d+)$/);
+    const statIndex = parseInt(statIndexStr, 10);
+    const uniIdx = parseInt(uniIdxStr, 10);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const uniState = viloyatUniState.get(userId);
+    if (!uniState || !uniState.unis[uniIdx]) {
+      await deleteMessageSafe(chatId, messageId);
+      await safeSend(chatId, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Ma'lumot topilmadi, qaytadan urinib ko'ring.", [backRow]);
+      return;
+    }
+
+    const otm = uniState.unis[uniIdx].otm;
+    const items = YONALISH_FLAT.filter((item) => item.otm === otm).sort(
+      (a, b) => parseBallForSort(b.grantBall) - parseBallForSort(a.grantBall)
+    );
+    uniYonalishState.set(userId, { viloyat: uniState.viloyat, statIndex, uniIdx, otm, items, page: 0 });
+
+    const rendered = renderUniYonalishPage(userId);
+    await deleteMessageSafe(chatId, messageId);
+    if (rendered) {
+      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
+      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
+      await safeSend(chatId, outText, outKeyboard);
+    }
+    return;
+  }
+
+  // Bitta universitetning yo'nalishlar ro'yxati — sahifalash (Keyingisi/Oldingisi)
+  if (query.data === 'vuy_page_next' || query.data === 'vuy_page_prev') {
+    const state = uniYonalishState.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!state) return;
+
+    state.page += query.data === 'vuy_page_next' ? 1 : -1;
+    const rendered = renderUniYonalishPage(userId);
+    if (rendered) {
+      await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
+    }
     return;
   }
 
