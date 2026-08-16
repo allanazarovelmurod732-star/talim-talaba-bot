@@ -478,7 +478,11 @@ async function fetchKengaytirilganPage(s4subject, s5subject, edLangId, pageNumbe
       : `https://mandat.uzbmb.uz/Bakalavr/Paginate?pageNumber=${pageNumber}&pageSize=${KQ_PAGE_SIZE}&${qs}`;
 
   const res = await fetch(url, { headers: { 'User-Agent': MANDAT_UA } });
-  if (!res.ok) throw new Error(`mandat.uzbmb.uz ${pageNumber <= 1 ? 'MainSearch' : 'Paginate'} ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`mandat.uzbmb.uz ${pageNumber <= 1 ? 'MainSearch' : 'Paginate'} ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   const html = await res.text();
   return parseKQCards(html);
 }
@@ -3253,6 +3257,38 @@ function crawlMatchKey(otm, nomi, shakl) {
   return `${normalizeText(otm)}|${normalizeText(nomi)}|${normalizeText(shakl)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Yig'uv jarayoni uchun bloklanishga (429/403) qarshi himoya — "Mandat
+// buyurtma"dagiga o'xshash eksponensial backoff: sayt cheklov qo'ysa, bot
+// so'rovni tashlab ketmasdan, kutib turib qayta uradi (kutish vaqti har
+// urinishda 2 baravar oshadi, CRAWL_BACKOFF_MAX_MS'gacha).
+// ---------------------------------------------------------------------------
+const CRAWL_BACKOFF_BASE_MS = 5000; // 1-urinishda ~5 soniya kutadi
+const CRAWL_BACKOFF_MAX_MS = 10 * 60 * 1000; // ko'pi bilan 10 daqiqa kutadi
+const CRAWL_MAX_RETRIES = 6; // shuncha marta qayta urinadi, keyin shu qismni tashlab o'tadi
+
+function isCrawlBlockError(err) {
+  return err && (err.status === 429 || err.status === 403);
+}
+
+async function fetchWithCrawlBackoff(fn, label) {
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isCrawlBlockError(err) || attempt >= CRAWL_MAX_RETRIES) throw err;
+      attempt += 1;
+      const waitMs = Math.min(CRAWL_BACKOFF_BASE_MS * 2 ** (attempt - 1), CRAWL_BACKOFF_MAX_MS);
+      console.warn(
+        `[CRAWL] ${label}: sayt cheklov qo'ydi (${err.status}). ${Math.round(waitMs / 1000)}s kutib, qayta urinamiz (${attempt}/${CRAWL_MAX_RETRIES})...`
+      );
+      await sleep(waitMs);
+    }
+  }
+}
+
 async function runMandat2025Crawl(options, onProgress) {
   const { delayMs = 400, maxPagesPerCombo = 300, onlySubject = null, onlyLangId = null, dryRun = false } = options || {};
 
@@ -3297,9 +3333,12 @@ async function runMandat2025Crawl(options, onProgress) {
           let cards;
           try {
             totalRequests++;
-            cards = await fetchKengaytirilganPage(s4subject, s5subject, edLangId, page);
+            cards = await fetchWithCrawlBackoff(
+              () => fetchKengaytirilganPage(s4subject, s5subject, edLangId, page),
+              `"${subject}" (til:${edLangId}) sahifa ${page}`
+            );
           } catch (err) {
-            console.error(`[CRAWL] "${subject}" sahifa ${page} xatosi:`, err.message);
+            console.error(`[CRAWL] "${subject}" sahifa ${page} xatosi (backoff'dan keyin ham):`, err.message);
             break;
           }
           await sleep(delayMs);
@@ -3309,7 +3348,7 @@ async function runMandat2025Crawl(options, onProgress) {
             let result = null;
             try {
               totalRequests++;
-              result = await fetchMandat2025Result(card.id);
+              result = await fetchWithCrawlBackoff(() => fetchMandat2025Result(card.id), `ID ${card.id}`);
             } catch (err) {
               result = null;
             }
@@ -5901,13 +5940,41 @@ app.listen(PORT, async () => {
   // ---------------------------------------------------------------------------
   if (process.env.MANDAT2025_AUTO_CRAWL === '1') {
     const intervalHours = Number(process.env.MANDAT2025_CRAWL_INTERVAL_HOURS) || 24;
-    console.log(`[CRAWL] Avtomatik yig'uv yoqilgan — har ${intervalHours} soatda ishga tushadi.`);
-    setInterval(() => {
-      if (mandat2025CrawlRunning) return;
-      console.log('[CRAWL] Avtomatik yig\'uv boshlandi...');
+    console.log(`[CRAWL] Avtomatik yig'uv yoqilgan — DARHOL boshlanadi, keyin har ${intervalHours} soatda takrorlanadi.`);
+
+    const runAutoCrawl = (label) => {
+      if (mandat2025CrawlRunning) {
+        console.log(`[CRAWL] ${label}: o'tkazib yuborildi — boshqa yig'uv allaqachon ishlamoqda.`);
+        return;
+      }
+      console.log(`[CRAWL] ${label} boshlandi...`);
+      const startedAt = Date.now();
       runMandat2025Crawl({}, null)
-        .then((res) => console.log(`[CRAWL] Avtomatik yig'uv tugadi: ${JSON.stringify(res)}`))
-        .catch((err) => console.error('[CRAWL] Avtomatik yig\'uv xatosi:', err.message));
-    }, intervalHours * 60 * 60 * 1000);
+        .then(async (res) => {
+          const minutes = Math.round((Date.now() - startedAt) / 60000);
+          console.log(`[CRAWL] ${label} tugadi (${minutes} daqiqa): ${JSON.stringify(res)}`);
+          if (ADMIN_CHAT_ID) {
+            try {
+              await bot.sendMessage(
+                ADMIN_CHAT_ID,
+                `<tg-emoji emoji-id=\"5447644880824181073\">✅</tg-emoji> Avtomatik yig'uv tugadi (${minutes} daqiqa)\n\n` +
+                  `Jami so'rovlar: ${res.totalRequests}\n` +
+                  `Jami o'zgargan: ${res.totalUpdated}\n` +
+                  `Yangi topilgan yo'nalishlar: ${res.discoveredNewCount}`,
+                { parse_mode: 'HTML' }
+              );
+            } catch (err) {
+              console.error('[CRAWL] Admin xabari yuborishda xatosi:', err.message);
+            }
+          }
+        })
+        .catch((err) => console.error(`[CRAWL] ${label} xatosi:`, err.message));
+    };
+
+    // Server ishga tushishi bilan DARHOL birinchi to'liq yig'uv boshlanadi
+    // (avvalgi versiyada faqat interval oralig'idan keyin boshlanardi)
+    runAutoCrawl("Birinchi (startdagi) yig'uv");
+
+    setInterval(() => runAutoCrawl('Avtomatik yig\'uv'), intervalHours * 60 * 60 * 1000);
   }
 });
