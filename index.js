@@ -75,7 +75,8 @@ function loadYonalishDb() {
     YONALISH_FLAT = [];
   }
 }
-loadYonalishDb();
+loadYonalishDb(); // Dastlabki (fallback) yuklash — server to'liq ishga tushganda,
+// pastdagi syncYonalishFromMongo() orqali MongoDB'dagi eng so'nggi nusxa bilan qayta yuklanadi
 
 // ---------------------------------------------------------------------------
 // "Viloyatlar statistikasi" — YONALISH_FLAT (allaqachon xotirada, hech qanday
@@ -1078,6 +1079,8 @@ const { MongoClient } = require('mongodb');
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'talimtalaba';
 const BUYURTMA_COLLECTION = 'buyurtmalar';
+const YONALISH_COLLECTION = 'yonalishlar_db';
+const YONALISH_MONGO_DOC_ID = 'main';
 
 // Har necha millisekundda bir marta barcha buyurtmalar tekshirilishi
 const BUYURTMA_POLL_INTERVAL_MS = Number(process.env.BUYURTMA_POLL_INTERVAL_MS) || 3 * 60 * 1000; // 3 daqiqa
@@ -1086,6 +1089,7 @@ const BUYURTMA_REQUEST_GAP_MS = Number(process.env.BUYURTMA_REQUEST_GAP_MS) || 1
 
 let mongoClient = null;
 let buyurtmaCollection = null;
+let yonalishCollection = null;
 
 async function connectMongo() {
   if (!MONGODB_URI) {
@@ -1098,10 +1102,61 @@ async function connectMongo() {
     const db = mongoClient.db(MONGODB_DB_NAME);
     buyurtmaCollection = db.collection(BUYURTMA_COLLECTION);
     await buyurtmaCollection.createIndex({ 'subscribers.userId': 1 });
+    yonalishCollection = db.collection(YONALISH_COLLECTION);
     console.log(`[MONGO] Ulandi: db="${MONGODB_DB_NAME}", collection="${BUYURTMA_COLLECTION}"`);
   } catch (err) {
     console.error('[MONGO] Ulanishda xatolik:', err.message);
     buyurtmaCollection = null;
+    yonalishCollection = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// yonalishlar.json — DOIMIY saqlash uchun MongoDB bilan sinxronlash.
+// Render'ning bepul tarifida disk qayta deploy/restart'da tozalanadi, shuning
+// uchun eng so'nggi yig'ilgan ma'lumot MongoDB'da saqlanadi va har startup'da
+// undan qayta tiklanadi (mahalliy fayl faqat tezkor keshi vazifasini bajaradi).
+// ---------------------------------------------------------------------------
+
+// Server ishga tushganda: agar MongoDB'da saqlangan nusxa bo'lsa, uni
+// mahalliy faylga yozib, xotirani o'sha bilan qayta yuklaydi.
+async function syncYonalishFromMongo() {
+  if (!yonalishCollection) {
+    console.warn("[YONALISH-SYNC] MongoDB ulanmagan — faqat mahalliy (ehtimol eski) nusxa ishlatiladi.");
+    return;
+  }
+  try {
+    const doc = await yonalishCollection.findOne({ _id: YONALISH_MONGO_DOC_ID });
+    if (!doc || !Array.isArray(doc.universitetlar)) {
+      console.log("[YONALISH-SYNC] MongoDB'da hali saqlangan nusxa yo'q — mahalliy (git) boshlang'ich fayl ishlatiladi.");
+      return;
+    }
+    fs.writeFileSync(YONALISH_DB_PATH, JSON.stringify(doc.universitetlar, null, 2), 'utf8');
+    loadYonalishDb();
+    console.log(`[YONALISH-SYNC] MongoDB'dan tiklandi (oxirgi saqlangan: ${doc.updatedAt || 'noma\'lum'}).`);
+  } catch (err) {
+    console.error('[YONALISH-SYNC] MongoDB\'dan o\'qishda xatolik:', err.message);
+  }
+}
+
+// Yig'uv (yoki boshqa yozuv) tugagach: mahalliy faylni MongoDB'ga yuklaydi —
+// shu bilan keyingi deploy/restart'da ma'lumot yo'qolib ketmaydi.
+async function syncYonalishToMongo() {
+  if (!yonalishCollection) {
+    console.warn("[YONALISH-SYNC] MongoDB ulanmagan — o'zgarishlar faqat mahalliy faylda qoladi (keyingi deploy'da o'chib ketishi mumkin!).");
+    return;
+  }
+  try {
+    const raw = fs.readFileSync(YONALISH_DB_PATH, 'utf8');
+    const universitetlar = JSON.parse(raw);
+    await yonalishCollection.updateOne(
+      { _id: YONALISH_MONGO_DOC_ID },
+      { $set: { universitetlar, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
+    console.log(`[YONALISH-SYNC] MongoDB'ga saqlandi (${universitetlar.length} ta OTM).`);
+  } catch (err) {
+    console.error('[YONALISH-SYNC] MongoDB\'ga yozishda xatolik:', err.message);
   }
 }
 
@@ -2967,11 +3022,28 @@ function renderViloyatUniPage(userId) {
   return { text, keyboard };
 }
 
+// _oxirgiYangilanish (ISO sana) mavjud bo'lsa, o'qish uchun qulay shaklda
+// qaytaradi; aks holda "hali yangilanmagan" deb bildiradi
+function fmtOxirgiYangilanish(iso) {
+  if (!iso) return "<i>hali yangilanmagan</i>";
+  try {
+    const d = new Date(iso);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}.${mm} ${hh}:${min}`;
+  } catch (err) {
+    return "<i>hali yangilanmagan</i>";
+  }
+}
+
 function formatUniYonalishLine(r, num) {
   return (
     `<b>${num}.</b> <tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
     `<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
-    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota`
+    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota\n` +
+    `<tg-emoji emoji-id=\"5361871412392787852\">🕓</tg-emoji> Yangilangan: ${fmtOxirgiYangilanish(r._oxirgiYangilanish)}`
   );
 }
 
@@ -3028,7 +3100,8 @@ function formatViloyatYonalishLine(r, num) {
     `<b>${num}.</b> <tg-emoji emoji-id=\"5233623301800093885\">🏫</tg-emoji> <b>${r.otm}</b>\n` +
     `<tg-emoji emoji-id=\"5357479219335012900\">📚</tg-emoji> ${r.nomi} · ${r.talimShakli} · ${r.til}\n` +
     `<tg-emoji emoji-id=\"6334740096293537039\">🟢</tg-emoji> Grant: <b>${r.grantBall || '—'}</b> ball, ${r.grantKvota || 0} kvota\n` +
-    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota`
+    `<tg-emoji emoji-id=\"5449430268664372351\">🔵</tg-emoji> Kontrakt: <b>${r.kontraktBall || '—'}</b> ball, ${r.kontraktKvota || 0} kvota\n` +
+    `<tg-emoji emoji-id=\"5361871412392787852\">🕓</tg-emoji> Yangilangan: ${fmtOxirgiYangilanish(r._oxirgiYangilanish)}`
   );
 }
 
@@ -3420,6 +3493,7 @@ async function runMandat2025Crawl(options, onProgress) {
         console.error('[CRAWL] Zaxira nusxa olishda xatolik:', err.message);
       }
       fs.writeFileSync(YONALISH_DB_PATH, JSON.stringify(universitetlar, null, 2), 'utf8');
+      await syncYonalishToMongo(); // MUHIM: keyingi deploy/restart'da yo'qolib ketmasligi uchun
 
       if (discoveredNew.length) {
         const reviewPath = path.join(DATA_DIR, 'yangi_yonalishlar_review.json');
@@ -5942,6 +6016,7 @@ app.listen(PORT, async () => {
   }
 
   await connectMongo();
+  await syncYonalishFromMongo();
   await configureBot();
 
   // ---------------------------------------------------------------------------
