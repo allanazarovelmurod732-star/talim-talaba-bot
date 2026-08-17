@@ -1518,7 +1518,9 @@ function subjectMatches(itemFanlar, subjectQuery) {
     .filter(Boolean);
   if (!parts.length) return false;
 
-  // Fanlar soni bir xil bo'lishi va har bir pozitsiyada mos kelishi shart
+  // Fanlar soni bir xil bo'lishi va HAR BIR POZITSIYADA mos kelishi shart —
+  // "Matematika + Fizika" va "Fizika + Matematika" saytda ALOHIDA, boshqa-boshqa
+  // guruh/kombinatsiya hisoblanadi (birinchi/ikkinchi fan o'rni ahamiyatli).
   if (parts.length !== itemNorm.length) return false;
   return parts.every((p, i) => itemNorm[i].includes(p));
 }
@@ -3325,6 +3327,9 @@ bot.onText(/^\/id/, async (msg) => {
 // Bir vaqtning o'zida faqat BITTA yig'uv jarayoni ishlashi mumkin.
 // ---------------------------------------------------------------------------
 let mandat2025CrawlRunning = false;
+// Joriy ishlayotgan yig'uvning so'nggi progressi — /yangila jarayon allaqachon
+// ishlab turganda ham foydalanuvchiga (adminga) holatni ko'rsata olishi uchun
+let mandat2025LastProgress = null;
 
 function crawlMatchKey(otm, nomi, shakl, til) {
   return `${normalizeText(otm)}|${normalizeText(nomi)}|${normalizeText(shakl)}|${normalizeText(til || '')}`;
@@ -3476,9 +3481,19 @@ async function runMandat2025Crawl(options, onProgress) {
           }
 
           const done = [...targetSet].filter((k) => idx.get(k).refreshed).length;
+          mandat2025LastProgress = {
+            subject,
+            edLangId,
+            page,
+            done,
+            target: targetSet.size,
+            totalRequests,
+            totalUpdated,
+            updatedAt: Date.now(),
+          };
           if (onProgress) {
             try {
-              await onProgress({ subject, edLangId, page, done, target: targetSet.size, totalRequests, totalUpdated });
+              await onProgress(mandat2025LastProgress);
             } catch (err) {}
           }
           if (done >= targetSet.size) break;
@@ -3527,8 +3542,18 @@ bot.onText(/^\/yangila(?:\s+([\s\S]+))?/, async (msg, match) => {
   if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
 
   if (mandat2025CrawlRunning) {
+    let statusText = "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Yig'uv jarayoni allaqachon ishlamoqda, tugashini kuting.";
+    const p = mandat2025LastProgress;
+    if (p) {
+      const secondsAgo = Math.round((Date.now() - p.updatedAt) / 1000);
+      statusText +=
+        `\n\nHozirgi holat (${secondsAgo}s oldin yangilangan):\n` +
+        `Fan: <b>${p.subject}</b> (til: ${p.edLangId}), sahifa ${p.page}\n` +
+        `Shu kombinatsiyada: ${p.done}/${p.target} yo'nalish yangilandi\n` +
+        `Jami so'rovlar: ${p.totalRequests}, jami o'zgargan: ${p.totalUpdated}`;
+    }
     try {
-      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Yig'uv jarayoni allaqachon ishlamoqda, tugashini kuting.", { parse_mode: 'HTML' });
+      await bot.sendMessage(msg.chat.id, statusText, { parse_mode: 'HTML' });
     } catch (err) {}
     return;
   }
