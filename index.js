@@ -3253,8 +3253,8 @@ bot.onText(/^\/id/, async (msg) => {
 // ---------------------------------------------------------------------------
 let mandat2025CrawlRunning = false;
 
-function crawlMatchKey(otm, nomi, shakl) {
-  return `${normalizeText(otm)}|${normalizeText(nomi)}|${normalizeText(shakl)}`;
+function crawlMatchKey(otm, nomi, shakl, til) {
+  return `${normalizeText(otm)}|${normalizeText(nomi)}|${normalizeText(shakl)}|${normalizeText(til || '')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -3304,7 +3304,7 @@ async function runMandat2025Crawl(options, onProgress) {
     const idx = new Map();
     universitetlar.forEach((uni, uniIdx) => {
       (uni.yonalishlar || []).forEach((y, yIdx) => {
-        idx.set(crawlMatchKey(uni.nomi, y.nomi, y.talimShakli), { uniIdx, yIdx, refreshed: false });
+        idx.set(crawlMatchKey(uni.nomi, y.nomi, y.talimShakli, y.til), { uniIdx, yIdx, refreshed: false });
       });
     });
 
@@ -3320,7 +3320,7 @@ async function runMandat2025Crawl(options, onProgress) {
       const targetKeys = [];
       universitetlar.forEach((uni) => {
         (uni.yonalishlar || []).forEach((y) => {
-          if (subjectMatches(y.fanlar, subject)) targetKeys.push(crawlMatchKey(uni.nomi, y.nomi, y.talimShakli));
+          if (subjectMatches(y.fanlar, subject)) targetKeys.push(crawlMatchKey(uni.nomi, y.nomi, y.talimShakli, y.til));
         });
       });
       const targetSet = new Set(targetKeys);
@@ -3344,19 +3344,31 @@ async function runMandat2025Crawl(options, onProgress) {
           await sleep(delayMs);
           if (!cards.length) break;
 
-          for (const card of cards) {
-            let result = null;
-            try {
-              totalRequests++;
-              result = await fetchWithCrawlBackoff(() => fetchMandat2025Result(card.id), `ID ${card.id}`);
-            } catch (err) {
-              result = null;
-            }
-            await sleep(delayMs);
+          // Bitta sahifadagi barcha nomzodlarni PARALEL (bir vaqtning o'zida)
+          // so'raymiz — avval har birini birma-bir, orasida kutib so'rar edik,
+          // bu esa 10 nomzodli sahifani 10 baravar sekinlashtirar edi.
+          const CRAWL_BATCH_SIZE = 8;
+          const results = [];
+          for (let i = 0; i < cards.length; i += CRAWL_BATCH_SIZE) {
+            const batch = cards.slice(i, i + CRAWL_BATCH_SIZE);
+            const batchResults = await Promise.all(
+              batch.map(async (card) => {
+                try {
+                  totalRequests++;
+                  return await fetchWithCrawlBackoff(() => fetchMandat2025Result(card.id), `ID ${card.id}`);
+                } catch (err) {
+                  return null;
+                }
+              })
+            );
+            results.push(...batchResults);
+            if (i + CRAWL_BATCH_SIZE < cards.length) await sleep(delayMs);
+          }
 
+          for (const result of results) {
             if (result && result.rows && result.rows.length) {
               for (const row of result.rows) {
-                const key = crawlMatchKey(row.university, row.yonalish, row.shakl);
+                const key = crawlMatchKey(row.university, row.yonalish, row.shakl, result.til);
                 const rec = idx.get(key);
                 if (rec) {
                   const uni = universitetlar[rec.uniIdx];
@@ -3417,9 +3429,9 @@ async function runMandat2025Crawl(options, onProgress) {
         } catch (err) {
           existing = [];
         }
-        const seen = new Set(existing.map((it) => crawlMatchKey(it.otm, it.nomi, it.talimShakli)));
+        const seen = new Set(existing.map((it) => crawlMatchKey(it.otm, it.nomi, it.talimShakli, it.til)));
         for (const item of discoveredNew) {
-          const k = crawlMatchKey(item.otm, item.nomi, item.talimShakli);
+          const k = crawlMatchKey(item.otm, item.nomi, item.talimShakli, item.til);
           if (!seen.has(k)) {
             seen.add(k);
             existing.push(item);
