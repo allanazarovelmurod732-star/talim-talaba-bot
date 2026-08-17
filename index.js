@@ -1081,6 +1081,8 @@ const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'talimtalaba';
 const BUYURTMA_COLLECTION = 'buyurtmalar';
 const YONALISH_COLLECTION = 'yonalishlar_db';
 const YONALISH_MONGO_DOC_ID = 'main';
+const MANDAT2025_IDS_COLLECTION = 'mandat2025_ids_db';
+const MANDAT2025_IDS_MONGO_DOC_ID = 'main';
 
 // Har necha millisekundda bir marta barcha buyurtmalar tekshirilishi
 const BUYURTMA_POLL_INTERVAL_MS = Number(process.env.BUYURTMA_POLL_INTERVAL_MS) || 3 * 60 * 1000; // 3 daqiqa
@@ -1090,6 +1092,7 @@ const BUYURTMA_REQUEST_GAP_MS = Number(process.env.BUYURTMA_REQUEST_GAP_MS) || 1
 let mongoClient = null;
 let buyurtmaCollection = null;
 let yonalishCollection = null;
+let mandat2025IdsCollection = null;
 
 async function connectMongo() {
   if (!MONGODB_URI) {
@@ -1103,11 +1106,13 @@ async function connectMongo() {
     buyurtmaCollection = db.collection(BUYURTMA_COLLECTION);
     await buyurtmaCollection.createIndex({ 'subscribers.userId': 1 });
     yonalishCollection = db.collection(YONALISH_COLLECTION);
+    mandat2025IdsCollection = db.collection(MANDAT2025_IDS_COLLECTION);
     console.log(`[MONGO] Ulandi: db="${MONGODB_DB_NAME}", collection="${BUYURTMA_COLLECTION}"`);
   } catch (err) {
     console.error('[MONGO] Ulanishda xatolik:', err.message);
     buyurtmaCollection = null;
     yonalishCollection = null;
+    mandat2025IdsCollection = null;
   }
 }
 
@@ -1157,6 +1162,63 @@ async function syncYonalishToMongo() {
     console.log(`[YONALISH-SYNC] MongoDB'ga saqlandi (${universitetlar.length} ta OTM).`);
   } catch (err) {
     console.error('[YONALISH-SYNC] MongoDB\'ga yozishda xatolik:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// mandat2025_ids.json (yig'ilgan abituriyent ID'lari + progress) — xuddi
+// yonalishlar.json kabi MongoDB bilan sinxronlanadi, shunda Render disk
+// tozalanib qolsa ham (deploy/restart), /idyigish va /tekshir progressi
+// yo'qolib ketmaydi.
+// ---------------------------------------------------------------------------
+async function syncMandat2025IdsFromMongo() {
+  if (!mandat2025IdsCollection) {
+    console.warn('[ID-SYNC] MongoDB ulanmagan — faqat mahalliy (ehtimol eski) nusxa ishlatiladi.');
+    return;
+  }
+  try {
+    const doc = await mandat2025IdsCollection.findOne({ _id: MANDAT2025_IDS_MONGO_DOC_ID });
+    if (!doc) {
+      console.log("[ID-SYNC] MongoDB'da hali saqlangan nusxa yo'q.");
+      return;
+    }
+    fs.writeFileSync(
+      MANDAT2025_IDS_PATH,
+      JSON.stringify(
+        {
+          ids: Array.isArray(doc.ids) ? doc.ids : [],
+          doneIds: Array.isArray(doc.doneIds) ? doc.doneIds : [],
+          completedCombos: Array.isArray(doc.completedCombos) ? doc.completedCombos : [],
+          updatedAt: doc.updatedAt || null,
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+    console.log(`[ID-SYNC] MongoDB'dan tiklandi (${(doc.ids || []).length} ta ID, oxirgi saqlangan: ${doc.updatedAt || 'noma\'lum'}).`);
+  } catch (err) {
+    console.error('[ID-SYNC] MongoDB\'dan o\'qishda xatolik:', err.message);
+  }
+}
+
+async function syncMandat2025IdsToMongo(state) {
+  if (!mandat2025IdsCollection) return; // Mongo ulanmagan — faqat mahalliy faylda qoladi
+  try {
+    await mandat2025IdsCollection.updateOne(
+      { _id: MANDAT2025_IDS_MONGO_DOC_ID },
+      {
+        $set: {
+          ids: state.ids,
+          doneIds: state.doneIds,
+          completedCombos: state.completedCombos,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      { upsert: true }
+    );
+  } catch (err) {
+    console.error('[ID-SYNC] MongoDB\'ga yozishda xatolik:', err.message);
   }
 }
 
@@ -3336,6 +3398,60 @@ function crawlMatchKey(otm, nomi, shakl, til) {
 }
 
 // ---------------------------------------------------------------------------
+// IKKI BOSQICHLI YIG'UV (tezroq va qayta tiklanadigan usul):
+//
+//   1-BOSQICH — /idyigish: mandat.uzbmb.uz'dan faqat "ro'yxat" (listing)
+//   sahifalarini o'qib, barcha abituriyent ID'larini yig'ib, DATA_DIR ichidagi
+//   mandat2025_ids.json fayliga saqlaydi. Bu bosqich YENGIL — har sahifada
+//   bitta so'rov, hech qanday "Details" sahifasi ochilmaydi.
+//
+//   2-BOSQICH — /tekshir: 1-bosqichda yig'ilgan ID ro'yxatini o'qib, har bir
+//   ID uchun BITTA marta /Mandat2025/Details so'rovi yuboradi (ID qaysi
+//   fan/til kombinatsiyasidan topilganidan qat'i nazar — chunki bitta odamning
+//   natija sahifasida uning TANLAGAN BARCHA yo'nalishlari allaqachon bor).
+//   Shu tufayli takroriy so'rovlar butunlay yo'qoladi va katta parallel
+//   (concurrency) bilan ishlash mumkin bo'ladi.
+//
+//   Ikkala bosqich ham progressni fayl ichida saqlab boradi — server
+//   qayta ishga tushib qolsa ham, komandani qayta yuborsangiz, qolgan
+//   joydan davom etadi (boshidan boshlamaydi).
+// ---------------------------------------------------------------------------
+const MANDAT2025_IDS_PATH = path.join(DATA_DIR, 'mandat2025_ids.json');
+
+function loadMandat2025IdsState() {
+  try {
+    const raw = fs.readFileSync(MANDAT2025_IDS_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    return {
+      ids: Array.isArray(data.ids) ? data.ids : [],
+      doneIds: Array.isArray(data.doneIds) ? data.doneIds : [],
+      completedCombos: Array.isArray(data.completedCombos) ? data.completedCombos : [],
+      updatedAt: data.updatedAt || null,
+    };
+  } catch (err) {
+    return { ids: [], doneIds: [], completedCombos: [], updatedAt: null };
+  }
+}
+
+async function saveMandat2025IdsState(state) {
+  fs.writeFileSync(
+    MANDAT2025_IDS_PATH,
+    JSON.stringify(
+      {
+        ids: state.ids,
+        doneIds: state.doneIds,
+        completedCombos: state.completedCombos,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    ),
+    'utf8'
+  );
+  await syncMandat2025IdsToMongo(state); // MUHIM: keyingi deploy/restart'da yo'qolib ketmasligi uchun
+}
+
+// ---------------------------------------------------------------------------
 // Yig'uv jarayoni uchun bloklanishga (429/403) qarshi himoya — "Mandat
 // buyurtma"dagiga o'xshash eksponensial backoff: sayt cheklov qo'ysa, bot
 // so'rovni tashlab ketmasdan, kutib turib qayta uradi (kutish vaqti har
@@ -3537,6 +3653,395 @@ async function runMandat2025Crawl(options, onProgress) {
     mandat2025CrawlRunning = false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// 1-BOSQICH: barcha (yoki bitta) fan/til kombinatsiyasi bo'yicha, faqat
+// ro'yxat (listing) sahifalarini o'qib, abituriyent ID'larini yig'ib chiqadi.
+// Har bir kombinatsiya to'liq tugagach — darhol faylga saqlanadi (shu
+// kombinatsiya "completedCombos" ga qo'shiladi), shuning uchun jarayon
+// to'xtab qolsa, keyingi safar allaqachon tugagan kombinatsiyalar qayta
+// o'qilmaydi.
+// ---------------------------------------------------------------------------
+async function collectMandat2025Ids(options, onProgress) {
+  const { delayMs = 300, maxPagesPerCombo = 400, onlySubject = null, onlyLangId = null, resetProgress = false } = options || {};
+
+  if (mandat2025CrawlRunning) {
+    throw new Error("Boshqa yig'uv/tekshiruv jarayoni allaqachon ishlamoqda — avval shu tugashini kuting.");
+  }
+  mandat2025CrawlRunning = true;
+
+  try {
+    const state = resetProgress ? { ids: [], doneIds: [], completedCombos: [] } : loadMandat2025IdsState();
+    const idSet = new Set(state.ids);
+    const completedSet = new Set(state.completedCombos);
+    const forceCombo = !!onlySubject; // aniq fan(lar) so'ralganda, shu birikma(lar) har doim qayta o'qiladi
+
+    const subjectsToRun = onlySubject ? [onlySubject] : MANDAT_SUBJECT_OPTIONS;
+    const allLangIds = Object.values(KQ_LANG_LABELS).map((l) => l.edLangId);
+    const langsToRun = onlyLangId ? [onlyLangId] : allLangIds;
+
+    let totalRequests = 0;
+    let newIdsFound = 0;
+
+    for (const subject of subjectsToRun) {
+      const [s4subject, s5subject] = subject.split('+').map((p) => p.trim());
+
+      for (const edLangId of langsToRun) {
+        const comboKey = `${subject}::${edLangId}`;
+        if (!forceCombo && completedSet.has(comboKey)) continue; // avval to'liq yig'ilgan — o'tkazib yuboramiz
+
+        for (let page = 1; page <= maxPagesPerCombo; page++) {
+          let cards;
+          try {
+            totalRequests++;
+            cards = await fetchWithCrawlBackoff(
+              () => fetchKengaytirilganPage(s4subject, s5subject, edLangId, page),
+              `[ID-YIG'] "${subject}" (til:${edLangId}) sahifa ${page}`
+            );
+          } catch (err) {
+            console.error(`[ID-YIG'] "${subject}" sahifa ${page} xatosi:`, err.message);
+            break;
+          }
+          await sleep(delayMs);
+          if (!cards.length) break;
+
+          for (const card of cards) {
+            if (card.id && !idSet.has(card.id)) {
+              idSet.add(card.id);
+              newIdsFound++;
+            }
+          }
+
+          mandat2025LastProgress = {
+            mode: 'collect',
+            subject,
+            edLangId,
+            page,
+            done: idSet.size,
+            target: null,
+            totalRequests,
+            totalUpdated: newIdsFound,
+            updatedAt: Date.now(),
+          };
+          if (onProgress) {
+            try {
+              await onProgress(mandat2025LastProgress);
+            } catch (err) {}
+          }
+
+          if (cards.length < KQ_PAGE_SIZE) break; // sahifa to'liq emas — bu oxirgi sahifa
+        }
+
+        completedSet.add(comboKey);
+        // Har bir kombinatsiya tugagach darhol saqlaymiz — server o'chib qolsa
+        // ham progress yo'qolmaydi.
+        state.ids = [...idSet];
+        state.completedCombos = [...completedSet];
+        await saveMandat2025IdsState(state);
+      }
+    }
+
+    return { totalIds: idSet.size, newIdsFound, totalRequests };
+  } finally {
+    mandat2025CrawlRunning = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2-BOSQICH: 1-bosqichda yig'ilgan ID ro'yxatini o'qib, har bir ID uchun
+// BITTA marta /Mandat2025/Details so'rovi yuboradi, natijadagi barcha
+// qatorlarni (odam tanlagan barcha yo'nalishlari) bazaga moslashtirib
+// yozadi. Katta concurrency (parallel so'rov) bilan ishlaydi, chunki endi
+// sahifalab ro'yxat o'qishga bog'liq emas.
+// ---------------------------------------------------------------------------
+async function checkMandat2025Ids(options, onProgress) {
+  const { batchSize = 20, delayMs = 150, forceAll = false } = options || {};
+
+  if (mandat2025CrawlRunning) {
+    throw new Error("Boshqa yig'uv/tekshiruv jarayoni allaqachon ishlamoqda — avval shu tugashini kuting.");
+  }
+  mandat2025CrawlRunning = true;
+
+  try {
+    const state = loadMandat2025IdsState();
+    if (!state.ids.length) {
+      throw new Error("Hali birorta ID yig'ilmagan — avval /idyigish ni ishga tushiring.");
+    }
+
+    const doneSet = new Set(forceAll ? [] : state.doneIds);
+    const idsToProcess = state.ids.filter((id) => !doneSet.has(id));
+
+    const raw = fs.readFileSync(YONALISH_DB_PATH, 'utf8');
+    const universitetlar = JSON.parse(raw);
+    const idx = new Map();
+    universitetlar.forEach((uni, uniIdx) => {
+      (uni.yonalishlar || []).forEach((y, yIdx) => {
+        idx.set(crawlMatchKey(uni.nomi, y.nomi, y.talimShakli, y.til), { uniIdx, yIdx });
+      });
+    });
+
+    const discoveredNew = [];
+    let totalRequests = 0;
+    let totalUpdated = 0;
+    let processedCount = 0;
+
+    for (let i = 0; i < idsToProcess.length; i += batchSize) {
+      const batch = idsToProcess.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(async (id) => {
+          try {
+            totalRequests++;
+            const result = await fetchWithCrawlBackoff(() => fetchMandat2025Result(id), `ID ${id}`);
+            return { id, result };
+          } catch (err) {
+            return { id, result: null };
+          }
+        })
+      );
+
+      for (const { id, result } of results) {
+        doneSet.add(id);
+        processedCount++;
+        if (result && result.rows && result.rows.length) {
+          for (const row of result.rows) {
+            const key = crawlMatchKey(row.university, row.yonalish, row.shakl, result.til);
+            const rec = idx.get(key);
+            if (rec) {
+              const uni = universitetlar[rec.uniIdx];
+              const y = uni.yonalishlar[rec.yIdx];
+              const changed =
+                String(y.grantBall || '') !== String(row.grantBall || '') ||
+                String(y.kontraktBall || '') !== String(row.kontraktBall || '');
+              if (changed) totalUpdated++;
+              y.grantBall = row.grantBall || y.grantBall;
+              y.kontraktBall = row.kontraktBall || y.kontraktBall;
+              if (row.shifr) y.shifr = row.shifr;
+              y._oxirgiYangilanish = new Date().toISOString();
+            } else {
+              discoveredNew.push({
+                otm: row.university,
+                nomi: row.yonalish,
+                talimShakli: row.shakl,
+                til: result.til,
+                grantBall: row.grantBall,
+                kontraktBall: row.kontraktBall,
+              });
+            }
+          }
+        }
+      }
+
+      // Har batch'dan keyin progressni saqlab boramiz — jarayon to'xtab qolsa
+      // ham, qayta ishga tushirilganda faqat qolgan ID'lar tekshiriladi.
+      state.doneIds = [...doneSet];
+      await saveMandat2025IdsState(state);
+
+      mandat2025LastProgress = {
+        mode: 'check',
+        subject: 'ID-tekshiruv',
+        edLangId: '-',
+        page: 0,
+        done: processedCount,
+        target: idsToProcess.length,
+        totalRequests,
+        totalUpdated,
+        updatedAt: Date.now(),
+      };
+      if (onProgress) {
+        try {
+          await onProgress(mandat2025LastProgress);
+        } catch (err) {}
+      }
+      if (delayMs) await sleep(delayMs);
+    }
+
+    try {
+      fs.copyFileSync(YONALISH_DB_PATH, `${YONALISH_DB_PATH}.bak.${Date.now()}`);
+    } catch (err) {
+      console.error('[TEKSHIR] Zaxira nusxa olishda xatolik:', err.message);
+    }
+    fs.writeFileSync(YONALISH_DB_PATH, JSON.stringify(universitetlar, null, 2), 'utf8');
+    await syncYonalishToMongo(); // MUHIM: keyingi deploy/restart'da yo'qolib ketmasligi uchun
+
+    if (discoveredNew.length) {
+      const reviewPath = path.join(DATA_DIR, 'yangi_yonalishlar_review.json');
+      let existing = [];
+      try {
+        existing = JSON.parse(fs.readFileSync(reviewPath, 'utf8'));
+      } catch (err) {
+        existing = [];
+      }
+      const seen = new Set(existing.map((it) => crawlMatchKey(it.otm, it.nomi, it.talimShakli, it.til)));
+      for (const item of discoveredNew) {
+        const k = crawlMatchKey(item.otm, item.nomi, item.talimShakli, item.til);
+        if (!seen.has(k)) {
+          seen.add(k);
+          existing.push(item);
+        }
+      }
+      fs.writeFileSync(reviewPath, JSON.stringify(existing, null, 2), 'utf8');
+    }
+
+    loadYonalishDb(); // xotiradagi YONALISH_FLAT'ni darhol yangilaymiz
+
+    return { totalRequests, totalUpdated, processedCount, totalIds: idsToProcess.length, discoveredNewCount: discoveredNew.length };
+  } finally {
+    mandat2025CrawlRunning = false;
+  }
+}
+
+bot.onText(/^\/idyigish(?:\s+([\s\S]+))?/, async (msg, match) => {
+  if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+
+  if (mandat2025CrawlRunning) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Boshqa jarayon (yig'uv/tekshiruv) allaqachon ishlamoqda, tugashini kuting.",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {}
+    return;
+  }
+
+  let onlySubject = null;
+  let onlyLangId = null;
+  const arg = (match && match[1] || '').trim();
+  const resetProgress = /^reset$/i.test(arg);
+  if (arg && !resetProgress) {
+    const [subjectPart, langPart] = arg.split('|').map((p) => p.trim());
+    onlySubject = subjectPart || null;
+    if (langPart) onlyLangId = parseInt(langPart, 10) || null;
+  }
+
+  let statusMsgId = null;
+  try {
+    const statusMsg = await bot.sendMessage(
+      msg.chat.id,
+      `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> ID'larni yig'ish boshlandi${onlySubject ? ` (${onlySubject}${onlyLangId ? `, til: ${onlyLangId}` : ''})` : ' (BARCHA fanlar/tillar bo\'yicha)'}...\n\n<i>Bu — faqat ro'yxat sahifalarini o'qiydi, tez ishlaydi.</i>`,
+      { parse_mode: 'HTML' }
+    );
+    statusMsgId = statusMsg.message_id;
+  } catch (err) {
+    console.error('/idyigish boshlanish xabari xatosi:', err.message);
+  }
+
+  let lastEditAt = 0;
+  collectMandat2025Ids(
+    { onlySubject, onlyLangId, resetProgress },
+    async ({ subject, edLangId, page, done, totalRequests, totalUpdated }) => {
+      const now = Date.now();
+      if (now - lastEditAt < 4000 || !statusMsgId) return;
+      lastEditAt = now;
+      try {
+        await bot.editMessageText(
+          `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> ID'lar yig'ilmoqda...\n\n` +
+            `Hozirgi: <b>${subject}</b> (til: ${edLangId}), sahifa ${page}\n` +
+            `Jami yig'ilgan (unikal) ID: <b>${done}</b>\n` +
+            `Shu jarayonda yangi topilgan: ${totalUpdated}\n` +
+            `Jami so'rovlar: ${totalRequests}`,
+          { chat_id: msg.chat.id, message_id: statusMsgId, parse_mode: 'HTML' }
+        );
+      } catch (err) {}
+    }
+  )
+    .then(async (res) => {
+      try {
+        await bot.sendMessage(
+          msg.chat.id,
+          `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> ID'lar yig'ish tugadi.\n\n` +
+            `Jami unikal ID (bazada): <b>${res.totalIds}</b>\n` +
+            `Shu jarayonda yangi topilgan: <b>${res.newIdsFound}</b>\n` +
+            `Jami so'rovlar: <b>${res.totalRequests}</b>\n\n` +
+            `Endi <b>/tekshir</b> komandasini yuboring — natijalar shu ID'lar bo'yicha tekshiriladi.`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (err) {
+        console.error('/idyigish yakun xabari xatosi:', err.message);
+      }
+    })
+    .catch(async (err) => {
+      console.error('[ID-YIG\'] Xatolik:', err.message);
+      try {
+        await bot.sendMessage(msg.chat.id, `<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Xatolik: ${err.message}`, { parse_mode: 'HTML' });
+      } catch (e) {}
+    });
+});
+
+bot.onText(/^\/tekshir(?:\s+(\S+))?/, async (msg, match) => {
+  if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+
+  if (mandat2025CrawlRunning) {
+    let statusText = "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Boshqa jarayon (yig'uv/tekshiruv) allaqachon ishlamoqda, tugashini kuting.";
+    const p = mandat2025LastProgress;
+    if (p) {
+      const secondsAgo = Math.round((Date.now() - p.updatedAt) / 1000);
+      statusText +=
+        `\n\nHozirgi holat (${secondsAgo}s oldin yangilangan):\n` +
+        `${p.mode === 'collect' ? "ID yig'ish" : p.mode === 'check' ? 'ID tekshiruv' : 'Eski usul'}: ` +
+        `${p.done}${p.target ? `/${p.target}` : ''}\n` +
+        `Jami so'rovlar: ${p.totalRequests}, jami o'zgargan: ${p.totalUpdated}`;
+    }
+    try {
+      await bot.sendMessage(msg.chat.id, statusText, { parse_mode: 'HTML' });
+    } catch (err) {}
+    return;
+  }
+
+  const forceAll = /^all$/i.test((match && match[1] || '').trim());
+
+  let statusMsgId = null;
+  try {
+    const statusMsg = await bot.sendMessage(
+      msg.chat.id,
+      `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> ID'lar bo'yicha natijalarni tekshirish boshlandi${forceAll ? ' (barchasi qaytadan)' : ''}...`,
+      { parse_mode: 'HTML' }
+    );
+    statusMsgId = statusMsg.message_id;
+  } catch (err) {
+    console.error('/tekshir boshlanish xabari xatosi:', err.message);
+  }
+
+  let lastEditAt = 0;
+  checkMandat2025Ids(
+    { forceAll },
+    async ({ done, target, totalRequests, totalUpdated }) => {
+      const now = Date.now();
+      if (now - lastEditAt < 4000 || !statusMsgId) return;
+      lastEditAt = now;
+      try {
+        await bot.editMessageText(
+          `<tg-emoji emoji-id=\"5017088445353296841\">🔎</tg-emoji> Tekshirilmoqda...\n\n` +
+            `ID'lar: <b>${done}/${target}</b>\n` +
+            `Jami so'rovlar: ${totalRequests}\n` +
+            `O'zgargan yo'nalishlar: ${totalUpdated}`,
+          { chat_id: msg.chat.id, message_id: statusMsgId, parse_mode: 'HTML' }
+        );
+      } catch (err) {}
+    }
+  )
+    .then(async (res) => {
+      try {
+        await bot.sendMessage(
+          msg.chat.id,
+          `<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Tekshiruv tugadi.\n\n` +
+            `Tekshirilgan ID: <b>${res.processedCount}</b> / ${res.totalIds}\n` +
+            `Jami so'rovlar: <b>${res.totalRequests}</b>\n` +
+            `O'zgargan yo'nalishlar: <b>${res.totalUpdated}</b>\n` +
+            `Bazada yo'q, yangi topilgan (review'da): <b>${res.discoveredNewCount}</b>`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (err) {
+        console.error('/tekshir yakun xabari xatosi:', err.message);
+      }
+    })
+    .catch(async (err) => {
+      console.error('[TEKSHIR] Xatolik:', err.message);
+      try {
+        await bot.sendMessage(msg.chat.id, `<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Xatolik: ${err.message}`, { parse_mode: 'HTML' });
+      } catch (e) {}
+    });
+});
 
 bot.onText(/^\/yangila(?:\s+([\s\S]+))?/, async (msg, match) => {
   if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
@@ -6042,6 +6547,7 @@ app.listen(PORT, async () => {
 
   await connectMongo();
   await syncYonalishFromMongo();
+  await syncMandat2025IdsFromMongo();
   await configureBot();
 
   // ---------------------------------------------------------------------------
