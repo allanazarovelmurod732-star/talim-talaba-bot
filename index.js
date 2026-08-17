@@ -3361,7 +3361,7 @@ async function deleteMessageSafe(chatId, messageId) {
 // ---------------------------------------------------------------------------
 // Shaxsiy chat ID'ni topish uchun — shu ID'ni .env fayldagi ADMIN_CHAT_ID ga
 // qo'yib qo'ysangiz, mini ilovadagi "Fikr-mulohaza" xabarlari shu chatga keladi
-bot.onText(/^\/id/, async (msg) => {
+bot.onText(/^\/id(?:\s|$)/, async (msg) => {
   try {
     await bot.sendMessage(
       msg.chat.id,
@@ -3484,7 +3484,7 @@ async function fetchWithCrawlBackoff(fn, label) {
 }
 
 async function runMandat2025Crawl(options, onProgress) {
-  const { delayMs = 400, maxPagesPerCombo = 300, onlySubject = null, onlyLangId = null, dryRun = false } = options || {};
+  const { delayMs = 400, maxPagesPerCombo = 20000, onlySubject = null, onlyLangId = null, dryRun = false } = options || {};
 
   if (mandat2025CrawlRunning) {
     throw new Error("Yig'uv jarayoni allaqachon ishlamoqda — avval shu tugashini kuting.");
@@ -3663,7 +3663,7 @@ async function runMandat2025Crawl(options, onProgress) {
 // o'qilmaydi.
 // ---------------------------------------------------------------------------
 async function collectMandat2025Ids(options, onProgress) {
-  const { delayMs = 300, maxPagesPerCombo = 400, onlySubject = null, onlyLangId = null, resetProgress = false } = options || {};
+  const { delayMs = 250, maxPagesPerCombo = 20000, batchSize = 10, onlySubject = null, onlyLangId = null, resetProgress = false } = options || {};
 
   if (mandat2025CrawlRunning) {
     throw new Error("Boshqa yig'uv/tekshiruv jarayoni allaqachon ishlamoqda — avval shu tugashini kuting.");
@@ -3690,25 +3690,67 @@ async function collectMandat2025Ids(options, onProgress) {
         const comboKey = `${subject}::${edLangId}`;
         if (!forceCombo && completedSet.has(comboKey)) continue; // avval to'liq yig'ilgan — o'tkazib yuboramiz
 
-        for (let page = 1; page <= maxPagesPerCombo; page++) {
-          let cards;
-          try {
-            totalRequests++;
-            cards = await fetchWithCrawlBackoff(
-              () => fetchKengaytirilganPage(s4subject, s5subject, edLangId, page),
-              `[ID-YIG'] "${subject}" (til:${edLangId}) sahifa ${page}`
-            );
-          } catch (err) {
-            console.error(`[ID-YIG'] "${subject}" sahifa ${page} xatosi:`, err.message);
-            break;
-          }
-          await sleep(delayMs);
-          if (!cards.length) break;
+        // Sahifalarni BIR-BIRIDAN MUSTAQIL (parallel, batch'lab) so'raymiz —
+        // qaysi sahifada ro'yxat tugashi oldindan noma'lum bo'lgani uchun,
+        // har batch tugagach "oxirgi sahifaga yetdikmi" tekshiramiz.
+        let page = 1;
+        let reachedEnd = false;
+        let hadErrors = false;
+        let consecutiveErrorBatches = 0;
 
-          for (const card of cards) {
-            if (card.id && !idSet.has(card.id)) {
-              idSet.add(card.id);
-              newIdsFound++;
+        while (!reachedEnd && page <= maxPagesPerCombo) {
+          const batchPages = [];
+          for (let i = 0; i < batchSize && page + i <= maxPagesPerCombo; i++) batchPages.push(page + i);
+
+          const batchResults = await Promise.all(
+            batchPages.map(async (p) => {
+              try {
+                totalRequests++;
+                const cards = await fetchWithCrawlBackoff(
+                  () => fetchKengaytirilganPage(s4subject, s5subject, edLangId, p),
+                  `[ID-YIG'] "${subject}" (til:${edLangId}) sahifa ${p}`
+                );
+                return { page: p, cards, errored: false };
+              } catch (err) {
+                console.error(`[ID-YIG'] "${subject}" sahifa ${p} xatosi:`, err.message);
+                return { page: p, cards: [], errored: true };
+              }
+            })
+          );
+          batchResults.sort((a, b) => a.page - b.page);
+
+          const batchAllErrored = batchResults.every((r) => r.errored);
+          if (batchAllErrored) {
+            hadErrors = true;
+            consecutiveErrorBatches += 1;
+            if (consecutiveErrorBatches >= 10) {
+              // Ketma-ket 10 batch (o'nlab so'rov) hammasi xato bergan bo'lsa,
+              // bu ro'yxat tugagani emas, balki tarmoq/sayt muammosi —
+              // kombinatsiyani "tugallangan" deb belgilamasdan to'xtaymiz,
+              // keyingi /idyigish'da shu joydan davom etadi.
+              break;
+            }
+          } else {
+            consecutiveErrorBatches = 0;
+          }
+
+          for (const { cards, errored } of batchResults) {
+            if (errored) {
+              hadErrors = true;
+              continue; // bu sahifa "bo'sh" emas — shunchaki so'rov muvaffaqiyatsiz bo'ldi, ro'yxat tugadi deb hisoblamaymiz
+            }
+            if (!cards.length) {
+              reachedEnd = true;
+              break; // haqiqiy bo'sh sahifa — ro'yxat shu yerda tugagan
+            }
+            for (const card of cards) {
+              if (card.id && !idSet.has(card.id)) {
+                idSet.add(card.id);
+                newIdsFound++;
+              }
+            }
+            if (cards.length < KQ_PAGE_SIZE) {
+              reachedEnd = true; // to'liq bo'lmagan sahifa — oxirgisi shu
             }
           }
 
@@ -3716,7 +3758,7 @@ async function collectMandat2025Ids(options, onProgress) {
             mode: 'collect',
             subject,
             edLangId,
-            page,
+            page: batchPages[batchPages.length - 1] || page,
             done: idSet.size,
             target: null,
             totalRequests,
@@ -3729,10 +3771,15 @@ async function collectMandat2025Ids(options, onProgress) {
             } catch (err) {}
           }
 
-          if (cards.length < KQ_PAGE_SIZE) break; // sahifa to'liq emas — bu oxirgi sahifa
+          page += batchSize;
+          if (!reachedEnd && delayMs) await sleep(delayMs);
         }
 
-        completedSet.add(comboKey);
+        // Faqat xatosiz tugagan kombinatsiyani "tugallangan" deb belgilaymiz —
+        // xato bo'lgan bo'lsa, keyingi /idyigish'da shu kombinatsiya qayta
+        // to'liq tekshiriladi (chunki qaysi sahifalar o'tkazib yuborilgani
+        // aniq emas, xavfsiz tomoni — qayta yig'ish).
+        if (!hadErrors) completedSet.add(comboKey);
         // Har bir kombinatsiya tugagach darhol saqlaymiz — server o'chib qolsa
         // ham progress yo'qolmaydi.
         state.ids = [...idSet];
