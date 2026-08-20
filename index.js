@@ -1917,9 +1917,9 @@ const feedbackReplyMap = new Map();
 // AI: Gemini (asosiy) + Groq (zaxira) — ikkalasi ham bepul tarif
 // ---------------------------------------------------------------------------
 const GEMINI_API_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent'; // gemini-2.5-flash yangi foydalanuvchilar uchun o'chirilgan, Google tavsiyasi bo'yicha yangilandi
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'openai/gpt-oss-120b'; // Groq 2026-06-17 llama-3.3-70b-versatile'ni eskirgan deb e'lon qildi
 
 const SYSTEM_INSTRUCTION =
   "Sen Ta'lim Talaba botining aqlli yordamchisisiz. O'zbek tilida qisqa, aniq va foydali javoblar ber. " +
