@@ -86,8 +86,7 @@ loadYonalishDb(); // Dastlabki (fallback) yuklash — server to'liq ishga tushga
 // ---------------------------------------------------------------------------
 const BALL2026_DB_PATH = path.join(DATA_DIR, 'otmlar-yonalishlar-bilan.json');
 const BALL2026_ESLATMA =
-  "<i>Eslatma: ballar mandat.uzbmb.uz (Mandat2025) ma'lumotlariga asoslangan, " +
-  "2026/2027 qabul uchun taxminiy mo'ljal sifatida beriladi — yakuniy ball emas.</i>";
+  "<i>Manba: mandat.uzbmb.uz (Mandat2025) — 2026/2027 qabul uchun rasmiy ma'lumotlar.</i>";
 
 let BALL2026_REGIONS = [];
 let BALL2026_META = null;
@@ -160,6 +159,105 @@ function loadBall2026Db() {
   }
 }
 loadBall2026Db();
+
+// ---------------------------------------------------------------------------
+// BALL2026 bo'yicha erkin matn qidiruvi (universitet/yo'nalish nomi, xato
+// yozilsa ham tanib oladi) — tugma bosmasdan to'g'ridan-to'g'ri yozib qidirish.
+// ---------------------------------------------------------------------------
+let BALL2026_SEARCH_INDEX = [];
+
+function normalizeUzText(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/[’‘ʻʼ`´]/g, "'")
+    .replace(/[^\p{L}\p{N}']+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function levenshteinDist(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+function wordSimilarity(a, b) {
+  if (a === b) return 1;
+  const dist = levenshteinDist(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  return maxLen === 0 ? 1 : 1 - dist / maxLen;
+}
+
+function buildBall2026SearchIndex() {
+  const index = [];
+  for (const region of BALL2026_REGIONS) {
+    for (const uni of region.universities) {
+      for (const dir of uni.directions) {
+        const normCombined = normalizeUzText(`${uni.university} ${dir.direction}`);
+        index.push({
+          region: region.region,
+          university: uni.university,
+          direction: dir.direction,
+          variants: dir.variants,
+          normWords: normCombined.split(' '),
+          normCombined,
+        });
+      }
+    }
+  }
+  BALL2026_SEARCH_INDEX = index;
+  console.log(`[BALL2026-QIDIRUV] ${index.length} ta yozuv bo'yicha qidiruv indeksi tayyorlandi.`);
+}
+buildBall2026SearchIndex();
+
+function searchBall2026(query, limit = 8) {
+  const normQuery = normalizeUzText(query);
+  const qWords = normQuery.split(' ').filter((w) => w.length >= 2);
+  if (qWords.length === 0) return [];
+
+  const scored = [];
+  for (const item of BALL2026_SEARCH_INDEX) {
+    // To'g'ridan-to'g'ri butun so'z birikmasi bilan mos kelishi — eng ishonchli hit
+    let matchedCount = 0;
+    let simSum = 0;
+
+    for (const qw of qWords) {
+      let bestSim = 0;
+      if (item.normCombined.includes(qw)) {
+        bestSim = 1;
+      } else {
+        for (const w of item.normWords) {
+          const sim = wordSimilarity(qw, w);
+          if (sim > bestSim) bestSim = sim;
+        }
+      }
+      const threshold = qw.length <= 3 ? 0.85 : qw.length <= 5 ? 0.72 : 0.65;
+      if (bestSim >= threshold) matchedCount += 1;
+      simSum += bestSim;
+    }
+
+    const coverage = matchedCount / qWords.length;
+    if (coverage >= 0.6) {
+      scored.push({ item, score: coverage * 1000 + simSum });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((s) => s.item);
+}
 
 // ---------------------------------------------------------------------------
 // "Viloyatlar statistikasi" — YONALISH_FLAT (allaqachon xotirada, hech qanday
@@ -2176,16 +2274,11 @@ function mainMenuScreen() {
     `<i>Quyidagi bo'limlardan birini tanlang yoki savol yozing</i> <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
 
   const keyboard = [
-    [btn({ text: 'Mandat tanlash', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.targetIcon })],
     [btn({ text: 'Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger', icon: EMOJI.searchIcon })],
     [btn({ text: '189 ball', callback_data: 'menu_189', style: 'primary', icon: EMOJI.statsIcon })],
     [btn({ text: 'Statistika super', callback_data: 'menu_statistika', style: 'danger', icon: EMOJI.statsIcon })],
-    [btn({ text: 'Viloyatlar statistikasi', callback_data: 'menu_viloyat_stat', style: 'primary', icon: EMOJI.globeIcon })],
     [btn({ text: "2026/2027 o'tish ballari", callback_data: 'menu_ball2026', style: 'danger', icon: EMOJI.statsIcon })],
-    [btn({ text: 'Fanlar taqqoslash', callback_data: 'menu_compare', style: 'primary', icon: EMOJI.chartIcon })],
-    [btn({ text: 'Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary', icon: EMOJI.listIcon })],
     [btn({ text: "Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger', icon: EMOJI.idIcon })],
-    [btn({ text: 'Mandat buyurtma', callback_data: 'menu_mandat_buyurtma', style: 'primary', icon: EMOJI.clockIcon })],
     [btn({ text: 'Biz haqimizda', callback_data: 'menu_about', style: 'success', icon: EMOJI.buildingIcon })],
   ];
 
@@ -3296,7 +3389,8 @@ function ball2026MainScreen() {
   const text =
     `${emoji(EMOJI.statsIcon, '📊')} <b>2026/2027 o'tish ballari</b>\n\n` +
     `Jami <b>${fmtSon(jamiUni)}</b> ta OTM va <b>${fmtSon(jamiYo)}</b> ta yo'nalish bo'yicha ma'lumot.\n\n` +
-    `Viloyatni tanlang <tg-emoji emoji-id="5231102735817918643">👇</tg-emoji>\n\n${BALL2026_ESLATMA}`;
+    `${emoji(EMOJI.searchIcon, '🔎')} <b>Tezroq yo'l:</b> tugmalarni bosmasdan, shu yerga to'g'ridan-to'g'ri universitet va/yoki yo'nalish nomini yozib yuboring — xato yoki qisqartirib yozsangiz ham topib beramiz.\n\n` +
+    `Yoki pastdan viloyatni tanlang <tg-emoji emoji-id="5231102735817918643">👇</tg-emoji>\n\n${BALL2026_ESLATMA}`;
 
   const keyboard = BALL2026_REGIONS.map((r, i) => [
     btn({
@@ -3410,20 +3504,15 @@ function renderBall2026DirPage(userId) {
 const SCREENS = {
   menu_back: mainMenuScreen,
   menu_ball2026: ball2026MainScreen,
-  menu_viloyat_stat: viloyatStatMainScreen,
   menu_about: aboutScreen,
   menu_channel: channelScreen,
   menu_test: testScreen,
   menu_founder: founderScreen,
   menu_faq: faqScreen,
-  menu_yonalish: yonalishSubjectScreen,
   menu_kengaytirilgan: kengaytirilganSubjectScreen,
   menu_189: ball189SubjectScreen,
   menu_statistika: statistikaSubjectScreen,
   menu_admin_advice: adminAdviceScreen,
-  menu_compare: () => compareSubjectScreen('a'),
-  cmp_back_a: () => compareSubjectScreen('a'),
-  cmp_back_b: () => compareSubjectScreen('b'),
 };
 
 // ---------------------------------------------------------------------------
@@ -4427,6 +4516,95 @@ bot.onText(/^\/xabar/, async (msg) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// /sendall — /xabar'dan farqli o'laroq tasdiqlashsiz darhol boshlanadi,
+// jarayon davomida "To'xtatish" tugmasi bilan va jonli progress bilan ishlaydi.
+// ---------------------------------------------------------------------------
+const sendallState = {
+  isActive: false,
+  shouldStop: false,
+};
+
+bot.onText(/^\/sendall/, async (msg) => {
+  if (!ADMIN_CHAT_ID || String(msg.chat.id) !== String(ADMIN_CHAT_ID)) return;
+
+  if (sendallState.isActive) {
+    try {
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Ayni paytda boshqa xabar tarqatish jarayoni ketmoqda. Iltimos, u tugashini kuting yoki uni to'xtating.", { parse_mode: 'HTML' });
+    } catch (err) {}
+    return;
+  }
+
+  if (!msg.reply_to_message) {
+    try {
+      await bot.sendMessage(msg.chat.id, "<tg-emoji emoji-id=\"5447644880824181073\">⚠️</tg-emoji> Iltimos, tarqatmoqchi bo'lgan xabaringizga reply (javob) qilib <code>/sendall</code> komandasini yuboring.", { parse_mode: 'HTML' });
+    } catch (err) {}
+    return;
+  }
+
+  const fromChatId = msg.reply_to_message.chat.id;
+  const srcMessageId = msg.reply_to_message.message_id;
+  const targets = [...USERS_DB];
+  const totalUsers = targets.length;
+
+  sendallState.isActive = true;
+  sendallState.shouldStop = false;
+
+  let statusMsg;
+  try {
+    statusMsg = await bot.sendMessage(
+      msg.chat.id,
+      `<tg-emoji emoji-id=\"5174818074167083884\">🚀</tg-emoji> Barcha <b>${totalUsers}</b> ta foydalanuvchiga xabar yuborish boshlandi...\n\nBu jarayon orqa fonda ishlaydi. Istalgan vaqtda to'xtatishingiz mumkin.`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [[{ text: "🛑 To'xtatish", callback_data: 'sendall_stop' }]] },
+      }
+    );
+  } catch (err) {
+    console.error('/sendall boshlanish xabari xatosi:', err.message);
+  }
+
+  (async () => {
+    let sent = 0;
+    let failed = 0;
+    let isStoppedByUser = false;
+
+    for (const targetId of targets) {
+      if (sendallState.shouldStop) {
+        isStoppedByUser = true;
+        break;
+      }
+      try {
+        await bot.copyMessage(targetId, fromChatId, srcMessageId);
+        sent += 1;
+      } catch (err) {
+        failed += 1;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    sendallState.isActive = false;
+    sendallState.shouldStop = false;
+
+    try {
+      if (statusMsg) {
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: msg.chat.id, message_id: statusMsg.message_id });
+      }
+      const finalStatusText = isStoppedByUser
+        ? "🛑 Xabar tarqatish jarayoni TO'XTATILDI!\n\n"
+        : "<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Xabar tarqatish to'liq YAKUNLANDI!\n\n";
+      await bot.sendMessage(
+        msg.chat.id,
+        finalStatusText +
+          `📈 Statistika:\n👥 Jami urinishlar: ${isStoppedByUser ? sent + failed : totalUsers} ta\n✅ Yetib bordi: ${sent} ta\n❌ Bloklagan yoki o'chirilgan: ${failed} ta`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('/sendall yakuniy hisobot xatosi:', err.message);
+    }
+  })();
+});
+
 bot.onText(/^\/start(?:\s+(\S+))?/, async (msg, match) => {
   const userId = msg.from.id;
   const chatType = msg.chat.type;
@@ -5079,10 +5257,49 @@ bot.on('message', async (msg) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// "2026/2027 o'tish ballari" — erkin matn qidiruvi. Foydalanuvchi tugma
+// bosmasdan universitet yoki yo'nalish nomini yozsa (xato/qisqartirib yozsa
+// ham), mos natijalarni topib ko'rsatadi.
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (msg._orderFlow) return;
+  if (!msg.text) return;
+  if (msg.text.startsWith('/')) return;
+  if (msg.text.trim().length < 3) return;
+  if (!BALL2026_SEARCH_INDEX.length) return;
+
+  const results = searchBall2026(msg.text, 8);
+  if (!results.length) return; // hech narsa topilmasa — AI chatga o'tkazamiz
+
+  msg._orderFlow = true; // shu xabarni AI handleri qayta ishlamasin
+
+  const chatId = msg.chat.id;
+  const isGroup = ['group', 'supergroup'].includes(msg.chat.type);
+
+  const header =
+    `${emoji(EMOJI.searchIcon, '🔎')} <b>"${msg.text.trim()}"</b> bo'yicha topilgan natijalar (${results.length} ta):\n\n`;
+  const body = results
+    .map((r, i) => `${formatBall2026DirectionLine({ direction: r.direction, variants: r.variants }, i + 1)}\n   <i>${r.university}, ${r.region}</i>`)
+    .join('\n\n');
+  const text = `${header}${body}\n\n${BALL2026_ESLATMA}`;
+
+  const keyboard = [backRow];
+  const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
+  const outText = isGroup ? stripTgEmoji(text) : text;
+
+  try {
+    await safeSend(chatId, outText, outKeyboard);
+  } catch (err) {
+    console.error('[BALL2026-QIDIRUV] xabar yuborish xatosi:', err.message);
+  }
+});
+
 bot.on('message', async (msg) => {
   // Mini ilova ma'lumotlari yuqorida alohida handlerda qayta ishlanadi
   if (msg.web_app_data) return;
-  // Admin fikr-mulohazaga javob berayotgan xabar yuqorida allaqachon qayta ishlandi
   if (msg._relayedToUser) return;
   // "Admin 24/7" / "Mandat tanlash" oqimidagi xabar yuqorida allaqachon qayta ishlandi
   if (msg._orderFlow) return;
@@ -5184,6 +5401,27 @@ bot.on('callback_query', async (query) => {
   const messageId = query.message.message_id;
   const userId = query.from.id;
   const isGroup = ['group', 'supergroup'].includes(query.message.chat.type);
+
+  // /sendall — jarayonni to'xtatish
+  if (query.data === 'sendall_stop') {
+    if (!ADMIN_CHAT_ID || String(query.from.id) !== String(ADMIN_CHAT_ID)) {
+      try {
+        await bot.answerCallbackQuery(query.id);
+      } catch (err) {}
+      return;
+    }
+    if (!sendallState.isActive) {
+      try {
+        await bot.answerCallbackQuery(query.id, { text: 'Tizimda hech qanday xabar tarqatish jarayoni ketmayapti.', show_alert: true });
+      } catch (err) {}
+      return;
+    }
+    sendallState.shouldStop = true;
+    try {
+      await bot.answerCallbackQuery(query.id, { text: "🛑 To'xtatilmoqda..." });
+    } catch (err) {}
+    return;
+  }
 
   // Admin — broadcast xabarni yuborishni bekor qilish
   if (query.data === 'broadcast_cancel') {
@@ -6176,91 +6414,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // "Mandat buyurtma" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
-  // umumiy SCREENS ro'yxatidan alohida ishlanadi)
-  if (query.data === 'menu_mandat_buyurtma') {
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    awaitingBuyurtmaId.delete(userId);
-    await deleteMessageSafe(chatId, messageId);
-    const { text, keyboard } = await buyurtmaScreen(userId);
-    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
-    const outText = isGroup ? stripTgEmoji(text) : text;
-    await safeSend(chatId, outText, outKeyboard);
-    return;
-  }
-
-  // "Mandat buyurtma" — yangi ID kiritishni so'raydi
-  if (query.data === 'buyurtma_new') {
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    await deleteMessageSafe(chatId, messageId);
-    await askForBuyurtmaId(chatId, userId);
-    return;
-  }
-
-  // "Mandat buyurtma" — foydalanuvchi kutmasdan, hoziroq natijani tekshirib ko'rmoqchi
-  if (query.data === 'buyurtma_check_now') {
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    await deleteMessageSafe(chatId, messageId);
-
-    const found = await findUserBuyurtma(userId);
-    if (!found) {
-      const { text, keyboard } = await buyurtmaScreen(userId);
-      const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
-      const outText = isGroup ? stripTgEmoji(text) : text;
-      await safeSend(chatId, outText, outKeyboard);
-      return;
-    }
-
-    await runMandatIdLookup(chatId, found.entrantId);
-    return;
-  }
-
-  // "Mandat buyurtma" — faol buyurtmani bekor qilish
-  if (query.data === 'buyurtma_cancel') {
-    await removeUserBuyurtma(userId);
-    try {
-      await bot.answerCallbackQuery(query.id, {
-        text: "<tg-emoji emoji-id=\"5422641561206793188\">✅</tg-emoji> Buyurtma bekor qilindi.",
-      });
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    await deleteMessageSafe(chatId, messageId);
-    const { text, keyboard } = await buyurtmaScreen(userId);
-    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
-    const outText = isGroup ? stripTgEmoji(text) : text;
-    await safeSend(chatId, outText, outKeyboard);
-    return;
-  }
-
-  // "Mening 5 ta tanlovim" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
-  // umumiy SCREENS ro'yxatidan alohida ishlanadi)
-  if (query.data === 'menu_tanlov') {
-    try {
-      await bot.answerCallbackQuery(query.id);
-    } catch (err) {
-      console.error('answerCallbackQuery xatosi:', err.message);
-    }
-    await deleteMessageSafe(chatId, messageId);
-    const { text, keyboard } = tanlovScreen(userId);
-    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
-    const outText = isGroup ? stripTgEmoji(text) : text;
-    await safeSend(chatId, outText, outKeyboard);
-    return;
-  }
-
   // "Botni baholang" bo'limi (foydalanuvchiga bog'liq bo'lgani uchun
   // umumiy SCREENS ro'yxatidan alohida ishlanadi)
   if (query.data === 'menu_baho') {
@@ -6738,10 +6891,6 @@ bot.on('callback_query', async (query) => {
 
   if (query.data === 'menu_back') {
     await sendMainMenu(chatId, isGroup);
-  } else if (query.data === 'menu_yonalish') {
-    const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
-    const outText = isGroup ? stripTgEmoji(text) : text;
-    await sendMandatScreen(chatId, outText, outKeyboard);
   } else {
     const outKeyboard = isGroup ? stripPremium(keyboard) : keyboard;
     const outText = isGroup ? stripTgEmoji(text) : text;
