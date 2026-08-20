@@ -79,6 +79,89 @@ loadYonalishDb(); // Dastlabki (fallback) yuklash — server to'liq ishga tushga
 // pastdagi syncYonalishFromMongo() orqali MongoDB'dagi eng so'nggi nusxa bilan qayta yuklanadi
 
 // ---------------------------------------------------------------------------
+// "2026/2027 o'tish ballari" — otmlar-yonalishlar-bilan.json (mandat.uzbmb.uz/
+// Mandat2025'dan yig'ilgan, "year": 2026 deb belgilangan flat yozuvlar ro'yxati)
+// asosida. Har bir yozuv: region + university + direction + til/shakl + ball.
+// Faylni DATA_DIR ichiga "otmlar-yonalishlar-bilan.json" nomi bilan joylashtiring.
+// ---------------------------------------------------------------------------
+const BALL2026_DB_PATH = path.join(DATA_DIR, 'otmlar-yonalishlar-bilan.json');
+const BALL2026_ESLATMA =
+  "<i>Eslatma: ballar mandat.uzbmb.uz (Mandat2025) ma'lumotlariga asoslangan, " +
+  "2026/2027 qabul uchun taxminiy mo'ljal sifatida beriladi — yakuniy ball emas.</i>";
+
+let BALL2026_REGIONS = [];
+let BALL2026_META = null;
+
+function loadBall2026Db() {
+  try {
+    const raw = fs.readFileSync(BALL2026_DB_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    const records = Array.isArray(parsed) ? parsed : parsed.data || [];
+
+    // Flat yozuvlarni region -> university -> direction -> variants ierarxiyasiga yig'ish
+    const regionMap = new Map(); // region_id -> { region_id, region, universities: Map }
+    for (const rec of records) {
+      if (!regionMap.has(rec.region_id)) {
+        regionMap.set(rec.region_id, { region_id: rec.region_id, region: rec.region, universities: new Map() });
+      }
+      const regionEntry = regionMap.get(rec.region_id);
+
+      if (!regionEntry.universities.has(rec.university_id)) {
+        regionEntry.universities.set(rec.university_id, {
+          university_id: rec.university_id,
+          university: rec.university,
+          directions: new Map(),
+        });
+      }
+      const uniEntry = regionEntry.universities.get(rec.university_id);
+
+      const dirKey = rec.direction_code;
+      if (!uniEntry.directions.has(dirKey)) {
+        uniEntry.directions.set(dirKey, {
+          direction_code: rec.direction_code,
+          direction: rec.direction,
+          variants: [],
+        });
+      }
+      uniEntry.directions.get(dirKey).variants.push({
+        education_type: rec.education_type,
+        education_language: rec.education_language,
+        state_grant: rec.passing_scores ? rec.passing_scores.state_grant : null,
+        contract: rec.passing_scores ? rec.passing_scores.contract : null,
+      });
+    }
+
+    // Map'larni oddiy massivlarga aylantirish
+    let universityCount = 0;
+    let directionCount = 0;
+    BALL2026_REGIONS = Array.from(regionMap.values()).map((r) => {
+      const universities = Array.from(r.universities.values()).map((u) => {
+        const directions = Array.from(u.directions.values());
+        directionCount += directions.length;
+        return { ...u, directions };
+      });
+      universityCount += universities.length;
+      return { ...r, universities };
+    });
+
+    BALL2026_META = {
+      source: parsed.source,
+      year: parsed.year,
+      recordCount: parsed.record_count || records.length,
+      regionCount: BALL2026_REGIONS.length,
+      universityCount,
+      directionCount,
+    };
+    console.log(`[BALL2026] ${BALL2026_REGIONS.length} ta viloyat, ${universityCount} ta OTM, ${directionCount} ta yo'nalish yuklandi.`);
+  } catch (err) {
+    console.warn(`[BALL2026] "${BALL2026_DB_PATH}" topilmadi yoki noto'g'ri — bo'lim bo'sh natija beradi. (${err.message})`);
+    BALL2026_REGIONS = [];
+    BALL2026_META = null;
+  }
+}
+loadBall2026Db();
+
+// ---------------------------------------------------------------------------
 // "Viloyatlar statistikasi" — YONALISH_FLAT (allaqachon xotirada, hech qanday
 // tarmoq so'rovisiz) universitet nomi ichidagi shahar/hudud nomiga qarab
 // taxminiy ravishda viloyatlarga guruhlanadi va har bir viloyat bo'yicha
@@ -2095,10 +2178,10 @@ function mainMenuScreen() {
   const keyboard = [
     [btn({ text: 'Mandat tanlash', callback_data: 'menu_yonalish', style: 'success', icon: EMOJI.targetIcon })],
     [btn({ text: 'Kengaytirilgan qidiruv', callback_data: 'menu_kengaytirilgan', style: 'danger', icon: EMOJI.searchIcon })],
-    [btn({ text: "O'tish ballari", callback_data: 'menu_ballvuz', style: 'success', icon: EMOJI.moneyIcon })],
     [btn({ text: '189 ball', callback_data: 'menu_189', style: 'primary', icon: EMOJI.statsIcon })],
     [btn({ text: 'Statistika super', callback_data: 'menu_statistika', style: 'danger', icon: EMOJI.statsIcon })],
     [btn({ text: 'Viloyatlar statistikasi', callback_data: 'menu_viloyat_stat', style: 'primary', icon: EMOJI.globeIcon })],
+    [btn({ text: "2026/2027 o'tish ballari", callback_data: 'menu_ball2026', style: 'danger', icon: EMOJI.statsIcon })],
     [btn({ text: 'Fanlar taqqoslash', callback_data: 'menu_compare', style: 'primary', icon: EMOJI.chartIcon })],
     [btn({ text: 'Mening 5 ta tanlovim', callback_data: 'menu_tanlov', style: 'primary', icon: EMOJI.listIcon })],
     [btn({ text: "Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'danger', icon: EMOJI.idIcon })],
@@ -3201,267 +3284,132 @@ function renderViloyatYonalishPage(userId) {
   return { text, keyboard };
 }
 
-// =============================================================================
-// "O'TISH BALLARI" — YANGI FUNKSIYA (OFLAYN)
-// mandat.uzbmb.uz/BallVuz2025 sahifasidan oldindan to'liq yig'ib olingan
-// ballvuz2025.json fayliga asoslanadi (14 viloyat, 105 OTM, 2499 yo'nalish).
-// Hech qanday jonli tarmoq so'rovi kerak emas — hammasi xotirada.
-// Foydalanuvchi: Viloyat -> OTM -> shu OTM'ning BARCHA yo'nalishlari, har
-// birining Grant balli va Kontrakt balli bilan.
-// =============================================================================
-const BALLVUZ_DB_PATH = path.join(DATA_DIR, 'ballvuz2025.json');
-let BALLVUZ_DATA = null; // { regions: [{ regionValue, regionText, universities: [...] }] }
-
-function loadBallVuzDb() {
-  try {
-    const raw = fs.readFileSync(BALLVUZ_DB_PATH, 'utf8');
-    const data = JSON.parse(raw);
-    BALLVUZ_DATA = data;
-    const uniCount = (data.regions || []).reduce((s, r) => s + (r.universities || []).length, 0);
-    console.log(`[BALLVUZ] ${data.regions ? data.regions.length : 0} ta viloyat, ${uniCount} ta OTM yuklandi.`);
-  } catch (err) {
-    console.warn(`[BALLVUZ] "${BALLVUZ_DB_PATH}" topilmadi yoki noto'g'ri — "O'tish ballari" bo'limi ishlamaydi.`);
-    BALLVUZ_DATA = null;
-  }
-}
-loadBallVuzDb();
-
 // ---------------------------------------------------------------------------
-// Ekranlar va holat (state) xotirasi
+// "2026/2027 o'tish ballari" ekranlari — viloyat -> universitetlar -> bitta
+// OTM'ning yo'nalishlari (til/shakl bo'yicha grant/kontrakt ball), otmlar-
+// yonalishlar-bilan.json'dagi tayyor ierarxiyadan to'g'ridan-to'g'ri o'qiydi.
 // ---------------------------------------------------------------------------
-const BV_UNI_PAGE_SIZE = 8;
-const BV_RESULT_PAGE_SIZE = 8;
-
-// userId -> { regionValue, regionText, unis, page }
-const bvUniState = new Map();
-// userId -> { regionText, uniName, directions, page }
-const bvResultState = new Map();
-
-function ballvuzRegionScreen() {
-  if (!BALLVUZ_DATA || !BALLVUZ_DATA.regions || !BALLVUZ_DATA.regions.length) {
-    return {
-      text: `${emoji(EMOJI.crossIcon, '❌')} "O'tish ballari" bazasi hali yuklanmagan. Admin bilan bog'laning.`,
-      keyboard: [backRow],
-    };
-  }
+function ball2026MainScreen() {
+  const jamiUni = BALL2026_META ? BALL2026_META.universityCount : 0;
+  const jamiYo = BALL2026_META ? BALL2026_META.directionCount : 0;
 
   const text =
-    `${emoji(EMOJI.moneyIcon, '💰')} <b>O'tish ballari</b>\n\n` +
-    `OTM tanlangan yo'nalishlarning <b>Grant</b> va <b>Kontrakt</b> o'tish ballarini bilib olasiz.\n\n` +
-    `Avval hududni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
+    `${emoji(EMOJI.statsIcon, '📊')} <b>2026/2027 o'tish ballari</b>\n\n` +
+    `Jami <b>${fmtSon(jamiUni)}</b> ta OTM va <b>${fmtSon(jamiYo)}</b> ta yo'nalish bo'yicha ma'lumot.\n\n` +
+    `Viloyatni tanlang <tg-emoji emoji-id="5231102735817918643">👇</tg-emoji>\n\n${BALL2026_ESLATMA}`;
 
-  const keyboard = BALLVUZ_DATA.regions.map((r) => [
+  const keyboard = BALL2026_REGIONS.map((r, i) => [
     btn({
-      text: `${r.regionText} — ${r.universities.length} ta OTM`,
-      callback_data: `bv_region_${r.regionValue}`,
+      text: `${r.region} — ${r.universities.length} ta OTM`,
+      callback_data: `b26_reg_${i}`,
       style: 'primary',
       icon: EMOJI.globeIcon,
     }),
   ]);
   keyboard.push(backRow);
+
   return { text, keyboard };
 }
 
-function renderBvUniPage(userId) {
-  const state = bvUniState.get(userId);
+const BALL2026_UNI_PAGE_SIZE = 8;
+const BALL2026_DIR_PAGE_SIZE = 5;
+
+// userId -> { regionIndex, page }
+const ball2026UniState = new Map();
+// userId -> { regionIndex, uniIdx, otm, directions, page }
+const ball2026DirState = new Map();
+
+function renderBall2026UniPage(userId) {
+  const state = ball2026UniState.get(userId);
   if (!state) return null;
 
-  const { regionText, unis } = state;
-  const totalPages = Math.max(1, Math.ceil(unis.length / BV_UNI_PAGE_SIZE));
+  const region = BALL2026_REGIONS[state.regionIndex];
+  if (!region) return null;
+
+  const unis = region.universities;
+  const totalPages = Math.max(1, Math.ceil(unis.length / BALL2026_UNI_PAGE_SIZE));
   const page = Math.min(Math.max(state.page, 0), totalPages - 1);
   state.page = page;
 
-  const start = page * BV_UNI_PAGE_SIZE;
-  const pageItems = unis.slice(start, start + BV_UNI_PAGE_SIZE);
+  const start = page * BALL2026_UNI_PAGE_SIZE;
+  const pageItems = unis.slice(start, start + BALL2026_UNI_PAGE_SIZE);
 
   const text =
-    `${emoji(EMOJI.globeIcon, '🗺')} <b>${regionText}</b> — OTMlar\n\n` +
-    `Jami: <b>${unis.length}</b> ta (${page + 1}/${totalPages}-sahifa). Universitetni tanlang <tg-emoji emoji-id=\"5231102735817918643\">👇</tg-emoji>`;
+    `${emoji(EMOJI.globeIcon, '🗺')} <b>${region.region}</b> — universitetlar\n\n` +
+    `Jami: <b>${unis.length}</b> ta OTM (${page + 1}/${totalPages}-sahifa). Universitetni tanlang <tg-emoji emoji-id="5231102735817918643">👇</tg-emoji>`;
 
   const keyboard = pageItems.map((u, i) => [
     btn({
-      text: `${u.universityName} — ${u.directionCount || (u.directions || []).length} ta yo'nalish`,
-      callback_data: `bv_uni_${start + i}`,
+      text: `${u.university} — ${u.directions.length} ta yo'nalish`,
+      callback_data: `b26_uni_${state.regionIndex}_${start + i}`,
       style: 'primary',
       icon: EMOJI.buildingIcon,
     }),
   ]);
 
   const navRow = [];
-  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'bv_uni_page_prev', style: 'primary', icon: EMOJI.backIcon }));
-  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'bv_uni_page_next', style: 'primary', icon: EMOJI.nextIcon }));
+  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'b26_uni_page_prev', style: 'primary', icon: EMOJI.backIcon }));
+  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'b26_uni_page_next', style: 'primary', icon: EMOJI.nextIcon }));
   if (navRow.length) keyboard.push(navRow);
 
-  keyboard.push([btn({ text: 'Hududlar ro\'yxatiga qaytish', callback_data: 'menu_ballvuz', style: 'success', icon: EMOJI.backIcon })]);
+  keyboard.push([btn({ text: "Viloyatlar ro'yxatiga qaytish", callback_data: 'menu_ball2026', style: 'success', icon: EMOJI.backIcon })]);
   keyboard.push(backRow);
+
   return { text, keyboard };
 }
 
-function formatBvResultLine(d, num) {
-  const grant = d.grantBall && d.grantBall > 0 ? `<b>${d.grantBall}</b> ball` : "<i>ma'lumot yo'q</i>";
-  const kontrakt = d.contractBall && d.contractBall > 0 ? `<b>${d.contractBall}</b> ball` : "<i>ma'lumot yo'q</i>";
-  return (
-    `<b>${num}.</b> ${emoji(EMOJI.booksIcon, '📚')} ${d.name}\n` +
-    `${emoji(EMOJI.greenIcon, '🟢')} Grant: ${grant}\n` +
-    `${emoji(EMOJI.blueIcon, '🔵')} Kontrakt: ${kontrakt}`
-  );
+function formatBall2026DirectionLine(d, num) {
+  const variantLines = (d.variants || [])
+    .map((v) => {
+      const shakl = v.education_type || '—';
+      const til = v.education_language || '—';
+      const grant = v.state_grant > 0 ? `${v.state_grant}` : '—';
+      const kontrakt = v.contract > 0 ? `${v.contract}` : '—';
+      return (
+        `   · ${shakl} / ${til}: ` +
+        `<tg-emoji emoji-id="6334740096293537039">🟢</tg-emoji> Grant <b>${grant}</b>` +
+        `, <tg-emoji emoji-id="5449430268664372351">🔵</tg-emoji> Kontrakt <b>${kontrakt}</b>`
+      );
+    })
+    .join('\n');
+
+  return `<b>${num}.</b> <tg-emoji emoji-id="5357479219335012900">📚</tg-emoji> ${d.direction}\n${variantLines}`;
 }
 
-function renderBvResultPage(userId) {
-  const state = bvResultState.get(userId);
+function renderBall2026DirPage(userId) {
+  const state = ball2026DirState.get(userId);
   if (!state) return null;
 
-  const { regionText, uniName, directions } = state;
-  const totalPages = Math.max(1, Math.ceil(directions.length / BV_RESULT_PAGE_SIZE));
+  const { otm, directions, regionIndex } = state;
+  const totalPages = Math.max(1, Math.ceil(directions.length / BALL2026_DIR_PAGE_SIZE));
   const page = Math.min(Math.max(state.page, 0), totalPages - 1);
   state.page = page;
 
-  const start = page * BV_RESULT_PAGE_SIZE;
-  const pageItems = directions.slice(start, start + BV_RESULT_PAGE_SIZE);
+  const start = page * BALL2026_DIR_PAGE_SIZE;
+  const pageItems = directions.slice(start, start + BALL2026_DIR_PAGE_SIZE);
 
   const header =
-    `${emoji(EMOJI.moneyIcon, '💰')} <b>${uniName}</b>\n` +
-    `${regionText}\n\n` +
-    `Jami: <b>${directions.length}</b> ta yo'nalish (${page + 1}/${totalPages}-sahifa)\n\n`;
+    `${emoji(EMOJI.buildingIcon, '🏫')} <b>${otm}</b>\n\n` +
+    `Jami: <b>${directions.length}</b> ta yo'nalish (${page + 1}/${totalPages}-sahifa), kontrakt balli bo'yicha kamayish tartibida.\n\n`;
 
-  const body = pageItems.length
-    ? pageItems.map((d, i) => formatBvResultLine(d, start + i + 1)).join('\n\n')
-    : "<i>Bu OTM uchun yo'nalishlar topilmadi.</i>";
-
-  const text = `${header}${body}\n\n${YONALISH_YIL_ESLATMASI}`;
+  const body = pageItems.map((d, i) => formatBall2026DirectionLine(d, start + i + 1)).join('\n\n');
+  const text = `${header}${body}\n\n${BALL2026_ESLATMA}`;
 
   const keyboard = [];
   const navRow = [];
-  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'bv_res_page_prev', style: 'primary', icon: EMOJI.backIcon }));
-  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'bv_res_page_next', style: 'primary', icon: EMOJI.nextIcon }));
+  if (page > 0) navRow.push(btn({ text: 'Oldingisi', callback_data: 'b26_dir_page_prev', style: 'primary', icon: EMOJI.backIcon }));
+  if (page < totalPages - 1) navRow.push(btn({ text: 'Keyingisi', callback_data: 'b26_dir_page_next', style: 'primary', icon: EMOJI.nextIcon }));
   if (navRow.length) keyboard.push(navRow);
 
-  keyboard.push([btn({ text: 'OTMlar ro\'yxatiga qaytish', callback_data: 'bv_back_unilist', style: 'success', icon: EMOJI.backIcon })]);
+  keyboard.push([btn({ text: "Universitetlar ro'yxatiga qaytish", callback_data: `b26_reg_${regionIndex}`, style: 'success', icon: EMOJI.backIcon })]);
   keyboard.push(backRow);
+
   return { text, keyboard };
-}
-
-// ---------------------------------------------------------------------------
-// Callback query handlerlar — bot.on('callback_query', ...) ICHIDA,
-// "const screenFn = SCREENS[query.data];" QATORIDAN OLDIN chaqiriladi
-// ---------------------------------------------------------------------------
-async function handleBallVuzCallbacks(query, ctx) {
-  const { chatId, messageId, userId, isGroup } = ctx;
-  const data = query.data || '';
-
-  if (!data.startsWith('bv_') && data !== 'menu_ballvuz') return false;
-
-  if (!BALLVUZ_DATA) {
-    try { await bot.answerCallbackQuery(query.id, { text: "Ma'lumotlar bazasi topilmadi.", show_alert: true }); } catch (err) {}
-    return true;
-  }
-
-  // Viloyat tanlandi -> shu viloyatdagi OTMlar ro'yxati
-  if (data.startsWith('bv_region_')) {
-    const regionValue = data.replace('bv_region_', '');
-    const region = BALLVUZ_DATA.regions.find((r) => String(r.regionValue) === regionValue);
-    try { await bot.answerCallbackQuery(query.id); } catch (err) {}
-    if (!region) return true;
-
-    bvUniState.set(userId, {
-      regionValue,
-      regionText: region.regionText,
-      unis: region.universities,
-      page: 0,
-    });
-
-    await deleteMessageSafe(chatId, messageId);
-    const rendered = renderBvUniPage(userId);
-    if (rendered) {
-      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
-      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
-      await safeSend(chatId, outText, outKeyboard);
-    }
-    return true;
-  }
-
-  // OTM ro'yxati — sahifalash
-  if (data === 'bv_uni_page_next' || data === 'bv_uni_page_prev') {
-    const state = bvUniState.get(userId);
-    try { await bot.answerCallbackQuery(query.id); } catch (err) {}
-    if (!state) return true;
-    state.page += data === 'bv_uni_page_next' ? 1 : -1;
-    const rendered = renderBvUniPage(userId);
-    if (rendered) await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
-    return true;
-  }
-
-  // OTM tanlandi -> shu OTM'ning barcha yo'nalishlari (grant/kontrakt ball bilan)
-  if (/^bv_uni_\d+$/.test(data)) {
-    const idx = parseInt(data.replace('bv_uni_', ''), 10);
-    const uniState = bvUniState.get(userId);
-    try { await bot.answerCallbackQuery(query.id); } catch (err) {}
-    const uni = uniState && uniState.unis[idx];
-    if (!uni) {
-      await deleteMessageSafe(chatId, messageId);
-      await safeSend(chatId, `${emoji(EMOJI.crossIcon, '❌')} Ma'lumot topilmadi, qaytadan urinib ko'ring.`, [backRow]);
-      return true;
-    }
-
-    // Yo'nalishlarni grant balli bo'yicha (bo'lmasa kontrakt balli bo'yicha) kamayish tartibida saralaymiz
-    const directions = [...(uni.directions || [])].sort((a, b) => {
-      const ag = a.grantBall > 0 ? a.grantBall : -1;
-      const bg = b.grantBall > 0 ? b.grantBall : -1;
-      if (bg !== ag) return bg - ag;
-      return (b.contractBall || 0) - (a.contractBall || 0);
-    });
-
-    bvResultState.set(userId, {
-      regionText: uniState.regionText,
-      uniName: uni.universityName,
-      directions,
-      page: 0,
-    });
-
-    await deleteMessageSafe(chatId, messageId);
-    const rendered = renderBvResultPage(userId);
-    if (rendered) {
-      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
-      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
-      await safeSend(chatId, outText, outKeyboard);
-    }
-    return true;
-  }
-
-  // Natijalar ro'yxati — sahifalash
-  if (data === 'bv_res_page_next' || data === 'bv_res_page_prev') {
-    const state = bvResultState.get(userId);
-    try { await bot.answerCallbackQuery(query.id); } catch (err) {}
-    if (!state) return true;
-    state.page += data === 'bv_res_page_next' ? 1 : -1;
-    const rendered = renderBvResultPage(userId);
-    if (rendered) await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
-    return true;
-  }
-
-  // "OTMlar ro'yxatiga qaytish" (natijalar ekranidan)
-  if (data === 'bv_back_unilist') {
-    try { await bot.answerCallbackQuery(query.id); } catch (err) {}
-    await deleteMessageSafe(chatId, messageId);
-    const rendered = renderBvUniPage(userId);
-    if (rendered) {
-      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
-      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
-      await safeSend(chatId, outText, outKeyboard);
-    } else {
-      await safeSend(chatId, `${emoji(EMOJI.crossIcon, '❌')} Sessiya tugagan, qaytadan boshlang.`, [
-        [btn({ text: "O'tish ballari", callback_data: 'menu_ballvuz', style: 'primary', icon: EMOJI.moneyIcon })],
-        backRow,
-      ]);
-    }
-    return true;
-  }
-
-  return false;
 }
 
 const SCREENS = {
   menu_back: mainMenuScreen,
+  menu_ball2026: ball2026MainScreen,
   menu_viloyat_stat: viloyatStatMainScreen,
   menu_about: aboutScreen,
   menu_channel: channelScreen,
@@ -3470,7 +3418,6 @@ const SCREENS = {
   menu_faq: faqScreen,
   menu_yonalish: yonalishSubjectScreen,
   menu_kengaytirilgan: kengaytirilganSubjectScreen,
-  menu_ballvuz: ballvuzRegionScreen,
   menu_189: ball189SubjectScreen,
   menu_statistika: statistikaSubjectScreen,
   menu_admin_advice: adminAdviceScreen,
@@ -6626,8 +6573,101 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  const bvHandled = await handleBallVuzCallbacks(query, { chatId, messageId, userId, isGroup });
-  if (bvHandled) return;
+  // "2026/2027 o'tish ballari" — viloyat tanlandi -> universitetlar ro'yxati
+  if (query.data && /^b26_reg_\d+$/.test(query.data)) {
+    const regionIndex = parseInt(query.data.replace('b26_reg_', ''), 10);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const region = BALL2026_REGIONS[regionIndex];
+    await deleteMessageSafe(chatId, messageId);
+    if (!region) {
+      await safeSend(chatId, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Ma'lumot topilmadi, qaytadan urinib ko'ring.", [backRow]);
+      return;
+    }
+
+    ball2026UniState.set(userId, { regionIndex, page: 0 });
+    ball2026DirState.delete(userId);
+
+    const rendered = renderBall2026UniPage(userId);
+    if (rendered) {
+      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
+      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
+      await safeSend(chatId, outText, outKeyboard);
+    }
+    return;
+  }
+
+  // Universitetlar ro'yxati — sahifalash
+  if (query.data === 'b26_uni_page_next' || query.data === 'b26_uni_page_prev') {
+    const state = ball2026UniState.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!state) return;
+
+    state.page += query.data === 'b26_uni_page_next' ? 1 : -1;
+    const rendered = renderBall2026UniPage(userId);
+    if (rendered) {
+      await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
+    }
+    return;
+  }
+
+  // Bitta universitet tanlandi -> shu OTM'ning yo'nalishlari
+  if (query.data && /^b26_uni_\d+_\d+$/.test(query.data)) {
+    const [, regionIndexStr, uniIdxStr] = query.data.match(/^b26_uni_(\d+)_(\d+)$/);
+    const regionIndex = parseInt(regionIndexStr, 10);
+    const uniIdx = parseInt(uniIdxStr, 10);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const region = BALL2026_REGIONS[regionIndex];
+    const uni = region && region.universities[uniIdx];
+    await deleteMessageSafe(chatId, messageId);
+    if (!uni) {
+      await safeSend(chatId, "<tg-emoji emoji-id=\"5210952531676504517\">❌</tg-emoji> Ma'lumot topilmadi, qaytadan urinib ko'ring.", [backRow]);
+      return;
+    }
+
+    const maxContract = (d) => Math.max(0, ...(d.variants || []).map((v) => v.contract || 0));
+    const directions = [...(uni.directions || [])].sort((a, b) => maxContract(b) - maxContract(a));
+    ball2026DirState.set(userId, { regionIndex, uniIdx, otm: uni.universityName, directions, page: 0 });
+
+    const rendered = renderBall2026DirPage(userId);
+    if (rendered) {
+      const outKeyboard = isGroup ? stripPremium(rendered.keyboard) : rendered.keyboard;
+      const outText = isGroup ? stripTgEmoji(rendered.text) : rendered.text;
+      await safeSend(chatId, outText, outKeyboard);
+    }
+    return;
+  }
+
+  // Bitta universitetning yo'nalishlari — sahifalash
+  if (query.data === 'b26_dir_page_next' || query.data === 'b26_dir_page_prev') {
+    const state = ball2026DirState.get(userId);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!state) return;
+
+    state.page += query.data === 'b26_dir_page_next' ? 1 : -1;
+    const rendered = renderBall2026DirPage(userId);
+    if (rendered) {
+      await safeEdit(chatId, messageId, rendered.text, rendered.keyboard);
+    }
+    return;
+  }
 
   const screenFn = SCREENS[query.data];
   if (!screenFn) {
