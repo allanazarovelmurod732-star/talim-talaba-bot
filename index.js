@@ -236,15 +236,15 @@ function searchBall2026(query, limit = 8) {
 
     for (const qw of qWords) {
       let bestSim = 0;
-      if (item.normCombined.includes(qw)) {
-        bestSim = 1;
-      } else {
-        for (const w of item.normWords) {
-          const sim = wordSimilarity(qw, w);
-          if (sim > bestSim) bestSim = sim;
-        }
+      // Har bir so'zni faqat BUTUN so'zlar bilan solishtiramiz (so'rov so'zi
+      // boshqa uzun so'zning ichiga "singib" ketib, yolg'on moslik hosil
+      // qilmasligi uchun oddiy substring tekshiruvi ataylab ishlatilmaydi —
+      // masalan "salom" so'zi "salomatlik" so'ziga mos kelib qolmasligi kerak).
+      for (const w of item.normWords) {
+        const sim = w === qw ? 1 : wordSimilarity(qw, w);
+        if (sim > bestSim) bestSim = sim;
       }
-      const threshold = qw.length <= 3 ? 0.85 : qw.length <= 5 ? 0.72 : 0.65;
+      const threshold = qw.length <= 3 ? 0.85 : qw.length <= 5 ? 0.78 : 0.72;
       if (bestSim >= threshold) matchedCount += 1;
       simSum += bestSim;
     }
