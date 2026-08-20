@@ -1264,6 +1264,7 @@ const YONALISH_COLLECTION = 'yonalishlar_db';
 const YONALISH_MONGO_DOC_ID = 'main';
 const MANDAT2025_IDS_COLLECTION = 'mandat2025_ids_db';
 const MANDAT2025_IDS_MONGO_DOC_ID = 'main';
+const USERS_COLLECTION = 'users_db'; // Broadcast ("/xabar", "/sendall") uchun foydalanuvchilar ro'yxati — DOIMIY saqlash
 
 // Har necha millisekundda bir marta barcha buyurtmalar tekshirilishi
 const BUYURTMA_POLL_INTERVAL_MS = Number(process.env.BUYURTMA_POLL_INTERVAL_MS) || 3 * 60 * 1000; // 3 daqiqa
@@ -1274,6 +1275,7 @@ let mongoClient = null;
 let buyurtmaCollection = null;
 let yonalishCollection = null;
 let mandat2025IdsCollection = null;
+let usersCollection = null;
 
 async function connectMongo() {
   if (!MONGODB_URI) {
@@ -1288,12 +1290,14 @@ async function connectMongo() {
     await buyurtmaCollection.createIndex({ 'subscribers.userId': 1 });
     yonalishCollection = db.collection(YONALISH_COLLECTION);
     mandat2025IdsCollection = db.collection(MANDAT2025_IDS_COLLECTION);
+    usersCollection = db.collection(USERS_COLLECTION);
     console.log(`[MONGO] Ulandi: db="${MONGODB_DB_NAME}", collection="${BUYURTMA_COLLECTION}"`);
   } catch (err) {
     console.error('[MONGO] Ulanishda xatolik:', err.message);
     buyurtmaCollection = null;
     yonalishCollection = null;
     mandat2025IdsCollection = null;
+    usersCollection = null;
   }
 }
 
@@ -1721,11 +1725,44 @@ function saveUsersDb() {
   }
 }
 
+// Server ishga tushganda: MongoDB'da saqlangan foydalanuvchilar ro'yxatini
+// mahalliy xotiraga qo'shib qo'yadi — Render'ning bepul tarifida disk
+// qayta deploy/restart'da tozalanganda ham foydalanuvchilar ro'yxati
+// (demak "/xabar" va "/sendall" qamrovi) yo'qolib qolmasligi uchun.
+async function syncUsersFromMongo() {
+  if (!usersCollection) {
+    console.warn('[USERS-SYNC] MongoDB ulanmagan — faqat mahalliy (ehtimol eski) nusxa ishlatiladi.');
+    return;
+  }
+  try {
+    const docs = await usersCollection.find({}, { projection: { _id: 1 } }).toArray();
+    let addedCount = 0;
+    for (const doc of docs) {
+      const key = String(doc._id);
+      if (!USERS_DB.has(key)) {
+        USERS_DB.add(key);
+        addedCount += 1;
+      }
+    }
+    if (addedCount > 0) saveUsersDb();
+    console.log(`[USERS-SYNC] MongoDB'dan tiklandi: jami ${USERS_DB.size} ta foydalanuvchi (${addedCount} ta yangi qo'shildi).`);
+  } catch (err) {
+    console.error('[USERS-SYNC] MongoDB\'dan o\'qishda xatolik:', err.message);
+  }
+}
+
 function registerUser(userId) {
   const key = String(userId);
   if (!USERS_DB.has(key)) {
     USERS_DB.add(key);
     saveUsersDb();
+  }
+  // MongoDB — DOIMIY manba: mahalliy fayl deploy/restart'da o'chib ketsa ham,
+  // foydalanuvchi ro'yxati shu yerdan tiklanadi (syncUsersFromMongo orqali)
+  if (usersCollection) {
+    usersCollection
+      .updateOne({ _id: key }, { $setOnInsert: { registeredAt: new Date() } }, { upsert: true })
+      .catch((err) => console.error('[USERS] MongoDB\'ga yozishda xatolik:', err.message));
   }
 }
 
@@ -6814,6 +6851,7 @@ app.listen(PORT, async () => {
   await connectMongo();
   await syncYonalishFromMongo();
   await syncMandat2025IdsFromMongo();
+  await syncUsersFromMongo();
   await configureBot();
 
   // ---------------------------------------------------------------------------
