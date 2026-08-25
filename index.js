@@ -2246,6 +2246,62 @@ function isCreatorQuestion(text) {
   return CREATOR_QUESTION_REGEX.test(text);
 }
 
+// HTML maxsus belgilarni xavfsiz qochirish (foydalanuvchi ismini chiqarishdan oldin)
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ---------------------------------------------------------------------------
+// Bayramona salomlashuv xabari — foydalanuvchi "salom" deb yozganda AI'ga
+// yuborilmasdan oldin, alohida chiroyli (maxsus emojili, qalin-qiya) xabar
+// ko'rsatiladi. Shundan keyin oddiy AI oqimi ("O'ylamoqda..." va h.k.) davom etadi.
+// ---------------------------------------------------------------------------
+function buildGreetingHtml(firstName) {
+  const safeName = escapeHtml(firstName || 'Do\u2019stim');
+  return (
+    `${emoji('5316544208159390529', '\uD83D\uDC4B')} <b><i>Assalomu Alaykum, ${safeName}!</i></b> ${emoji('5471894313422044482', '\u2728')}\n\n` +
+    `${emoji('5447321796204305159', '\uD83C\uDF89')} <b><i>O'zbekiston Mustaqilligining 35-yilligi Muborak bo'lsin!</i></b> ${emoji('5400082374333605709', '\uD83C\uDDFA\uD83C\uDDFF')}\n` +
+    `${emoji('5377429840641165155', '\uD83D\uDD4A')} <b><i>Tinchligimizga ko'z tegmasin!</i></b>\n\n\n` +
+    `${emoji('5377429840641165155', '\uD83D\uDD4A')} Savolingizga esa hozir javob beraman ${emoji('5443038326535759644', '\uD83D\uDCAC')}`
+  );
+}
+
+// Faqat qisqa, sof salomlashuv xabarlarini ushlaydi ("Salom", "Assalomu alaykum",
+// "Salom bot" va h.k.) — uzun/savolli xabarlarni (masalan "salom, menga yordam
+// bering...") salomlashuv deb hisoblamaydi, shunda AI ular bilan normal ishlaydi.
+const GREETING_REGEX = /^(assalomu\s*alaykum|assalom|vaalaykum\s*assalom|salomlar|salom|hi|hello|hey|salaam|привет)\b/i;
+
+function isGreetingMessage(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (t.split(/\s+/).length > 5) return false; // uzun xabar — bu oddiy salom emas
+  const normalized = t.toLowerCase().replace(/[^\p{L}\s]+/gu, ' ').trim();
+  return GREETING_REGEX.test(normalized);
+}
+
+// ---------------------------------------------------------------------------
+// Botning xabariga "rahmat" deb javob (reply) qilinganda — AI'ga
+// yubormasdan, o'sha maxsus emojilar bilan iliq javob qaytariladi.
+// ---------------------------------------------------------------------------
+function buildThanksHtml() {
+  return (
+    `${emoji('5377429840641165155', '\uD83D\uDD4A')} <b><i>Arzimaydi!</i></b> ${emoji('5443038326535759644', '\uD83D\uDCAC')} ` +
+    `Har doim yordam berishga tayyorman \u2014 savolingiz bo'lsa, bemalol yozavering.`
+  );
+}
+
+const THANKS_REGEX = /^(katta\s+)?(rahmat|raxmat|tashakkur|spasibo|thanks?|thank\s*you)\b/i;
+
+function isThanksMessage(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (t.split(/\s+/).length > 6) return false;
+  return THANKS_REGEX.test(t.toLowerCase());
+}
+
 function stripPremium(keyboard) {
   return keyboard
     .map((row) =>
@@ -5138,6 +5194,35 @@ bot.on('message', async (msg) => {
   const repliedFromBot = msg.reply_to_message?.from?.username === botUsername;
   const rawReplyText = msg.reply_to_message?.text || msg.reply_to_message?.caption || '';
   const replyContext = repliedFromBot && rawReplyText ? stripAllHtml(rawReplyText) : undefined;
+
+  // Foydalanuvchi botning xabariga "rahmat" deb javob qaytarsa — AI'ga
+  // yubormasdan, maxsus emojili iliq javob beramiz va shu yerda to'xtaymiz
+  if (!msg.photo && repliedFromBot && isThanksMessage(userText)) {
+    msg._orderFlow = true;
+    try {
+      await bot.sendMessage(msg.chat.id, buildThanksHtml(), {
+        parse_mode: 'HTML',
+        reply_to_message_id: msg.message_id,
+      });
+    } catch (err) {
+      console.error("Rahmat javobini yuborishda xatolik:", err.message);
+    }
+    return;
+  }
+
+  // Foydalanuvchi shunchaki salomlashsa ("Salom", "Assalomu alaykum" va h.k.)
+  // — AI'dan oldin, bayramona/maxsus emojili tabrik xabarini alohida yuboramiz.
+  // Shundan keyin pastdagi AI oqimi ("O'ylamoqda..." va javob) odatdagidek davom etadi.
+  if (!msg.photo && isGreetingMessage(userText)) {
+    try {
+      await bot.sendMessage(msg.chat.id, buildGreetingHtml(msg.from.first_name), {
+        parse_mode: 'HTML',
+        reply_to_message_id: msg.message_id,
+      });
+    } catch (err) {
+      console.error('Salomlashuv xabarini yuborishda xatolik:', err.message);
+    }
+  }
 
   // Ko'p foydalanuvchi tugma bosmasdan, to'g'ridan-to'g'ri "mening IDim 5506347,
   // ko'rib ber" deb yozadi. Bunday holatda AI'ga umuman yuborilmaydi (chunki AI'da
