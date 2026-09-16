@@ -1,6 +1,7 @@
 require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
 
@@ -20,6 +21,17 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 // Mini ilovadagi "Fikr-mulohaza" formasidan kelgan xabarlar shu chatga yuboriladi
 // (bo'lmasa, faqat konsolga yoziladi)
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
+
+// ---------------------------------------------------------------------------
+// Click.uz (my.click.uz) — "Talaba xizmatlari" bo'limidagi to'lovlar uchun.
+// Barcha qiymatlarni Click Merchant Cabinet'dan olib, .env fayliga joylashtiring:
+// CLICK_SERVICE_ID, CLICK_MERCHANT_ID, CLICK_SECRET_KEY.
+// Click "Prepare" va "Complete" so'rovlarini quyidagi manzillarga yuboradi
+// (WEBHOOK_URL asosida): {WEBHOOK_URL}/click/prepare va {WEBHOOK_URL}/click/complete
+const CLICK_SERVICE_ID = process.env.CLICK_SERVICE_ID || '';
+const CLICK_MERCHANT_ID = process.env.CLICK_MERCHANT_ID || '';
+const CLICK_MERCHANT_USER_ID = process.env.CLICK_MERCHANT_USER_ID || '';
+const CLICK_SECRET_KEY = process.env.CLICK_SECRET_KEY || '';
 
 if (!BOT_TOKEN) {
   console.error("XATOLIK: BOT_TOKEN environment o'zgaruvchisi topilmadi (.env faylga qarang).");
@@ -1766,6 +1778,75 @@ function registerUser(userId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// "Talaba xizmatlari" — narxini admin belgilaydigan xizmatlar (slayd, veb-sayt,
+// Word/Excel hujjat va h.k.). Har bir xizmatning narxi diskka (JSON) saqlanadi,
+// to'lov esa Click.uz orqali qabul qilinadi (pastda, EMOJI/btn aniqlangandan
+// keyingi bo'limda ekranlar va Click webhooklari joylashgan).
+// ---------------------------------------------------------------------------
+const XIZMAT_NARX_DB_PATH = path.join(DATA_DIR, 'xizmat_narxlar.json');
+// xizmat id -> narx (so'mda, butun son). Narx belgilanmagan bo'lsa, xizmat ro'yxatda
+// "narx hali belgilanmagan" deb ko'rsatiladi va to'lov tugmasi chiqmaydi.
+let XIZMAT_NARXLAR = new Map();
+
+function loadXizmatNarxlar() {
+  try {
+    const raw = fs.readFileSync(XIZMAT_NARX_DB_PATH, 'utf8');
+    XIZMAT_NARXLAR = new Map(Object.entries(JSON.parse(raw)));
+    console.log(`[XIZMAT] ${XIZMAT_NARXLAR.size} ta xizmat narxi yuklandi.`);
+  } catch (err) {
+    XIZMAT_NARXLAR = new Map();
+  }
+}
+loadXizmatNarxlar();
+
+function saveXizmatNarxlar() {
+  try {
+    fs.writeFileSync(XIZMAT_NARX_DB_PATH, JSON.stringify(Object.fromEntries(XIZMAT_NARXLAR), null, 2), 'utf8');
+  } catch (err) {
+    console.error('[XIZMAT] Narxlarni saqlashda xatolik:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// "Talaba xizmatlari" — to'lov buyurtmalari (Click.uz orqali). Har bir
+// buyurtma noyob raqamli ID bilan diskka saqlanadi (server qayta ishga
+// tushsa ham to'lov holati yo'qolmasligi uchun).
+// ---------------------------------------------------------------------------
+const XIZMAT_BUYURTMA_DB_PATH = path.join(DATA_DIR, 'xizmat_buyurtmalar.json');
+// buyurtma ID (string, raqamli) -> { id, userId, chatId, serviceId, serviceName,
+//   amount, status: 'pending'|'paid'|'cancelled', createdAt, clickTransId, paidAt }
+let XIZMAT_BUYURTMALAR = new Map();
+
+function loadXizmatBuyurtmalar() {
+  try {
+    const raw = fs.readFileSync(XIZMAT_BUYURTMA_DB_PATH, 'utf8');
+    XIZMAT_BUYURTMALAR = new Map(Object.entries(JSON.parse(raw)));
+    console.log(`[XIZMAT-BUYURTMA] ${XIZMAT_BUYURTMALAR.size} ta buyurtma yuklandi.`);
+  } catch (err) {
+    XIZMAT_BUYURTMALAR = new Map();
+  }
+}
+loadXizmatBuyurtmalar();
+
+function saveXizmatBuyurtmalar() {
+  try {
+    fs.writeFileSync(XIZMAT_BUYURTMA_DB_PATH, JSON.stringify(Object.fromEntries(XIZMAT_BUYURTMALAR), null, 2), 'utf8');
+  } catch (err) {
+    console.error('[XIZMAT-BUYURTMA] Saqlashda xatolik:', err.message);
+  }
+}
+
+// Faqat ADMIN_CHAT_ID'ga tegishli ID'lar uchun true qaytaradi
+function isAdmin(id) {
+  return Boolean(ADMIN_CHAT_ID) && String(id) === String(ADMIN_CHAT_ID);
+}
+
+// Sonni "12 000" ko'rinishida (bo'sh joy bilan ajratilgan) formatlaydi
+function fmtSum(n) {
+  return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
 // Admin /xabar (reply qilib) yuborgandan keyin, tasdiqlash kutilayotgan
 // broadcast ma'lumoti shu yerda vaqtincha turadi (bir vaqtda bittasi)
 let pendingBroadcast = null; // { fromChatId, messageId }
@@ -2372,6 +2453,7 @@ function mainMenuScreen() {
     [btn({ text: 'Statistika super', callback_data: 'menu_statistika', style: 'primary', icon: EMOJI.statsIcon })],
     [btn({ text: "2026/2027 o'tish ballari", callback_data: 'menu_ball2026', style: 'danger', icon: EMOJI.statsIcon })],
     [btn({ text: "Natijamni tekshirish (ID)", callback_data: 'menu_mandat_id', style: 'primary', icon: EMOJI.idIcon })],
+    [btn({ text: 'Talaba xizmatlari', callback_data: 'menu_xizmatlar', style: 'danger', icon: EMOJI.moneyIcon })],
     [btn({ text: 'Biz haqimizda', callback_data: 'menu_about', style: 'success', icon: EMOJI.buildingIcon })],
   ];
 
@@ -3594,6 +3676,216 @@ function renderBall2026DirPage(userId) {
   return { text, keyboard };
 }
 
+// ---------------------------------------------------------------------------
+// "Talaba xizmatlari" — xizmatlar katalogi (nomi/tavsifi shu yerda qattiq
+// yozilgan, narxini esa admin bot orqali belgilaydi/o'zgartiradi)
+// ---------------------------------------------------------------------------
+const XIZMATLAR = [
+  {
+    id: 'slayd',
+    name: 'Slayd (taqdimot) tayyorlash',
+    desc: "Mavzungiz bo'yicha chiroyli dizaynli, tayyor PowerPoint taqdimot (prezentatsiya) tayyorlab beramiz.",
+    icon: EMOJI.schoolIcon,
+  },
+  {
+    id: 'referat',
+    name: 'Referat / Mustaqil ish yozish',
+    desc: 'Talab qilingan mavzu va formatga mos referat yoki mustaqil ish yozib, rasmiylashtirib beramiz.',
+    icon: EMOJI.booksIcon,
+  },
+  {
+    id: 'kurs_ishi',
+    name: 'Kurs ishi tayyorlash',
+    desc: "Kurs ishingizni tuzilmasi, mundarija va adabiyotlar ro'yxati bilan to'liq tayyorlab beramiz.",
+    icon: EMOJI.gradIcon,
+  },
+  {
+    id: 'website',
+    name: 'Veb-sayt yaratish',
+    desc: 'Shaxsiy, portfolio yoki kichik biznes uchun zamonaviy veb-sayt ishlab chiqamiz.',
+    icon: EMOJI.globeIcon,
+  },
+  {
+    id: 'word',
+    name: 'Wordda hujjat tayyorlash',
+    desc: "Har qanday matn, hisobot yoki hujjatni Word (.docx) formatida chiroyli tarzda rasmiylashtirib beramiz.",
+    icon: EMOJI.writeIcon,
+  },
+  {
+    id: 'excel',
+    name: 'Excelda jadval/hisobot tayyorlash',
+    desc: "Ma'lumotlaringiz asosida Excelda jadval, hisob-kitob yoki diagramma (.xlsx) tayyorlab beramiz.",
+    icon: EMOJI.chartIcon,
+  },
+  {
+    id: 'tarjima',
+    name: 'Matn tarjima qilish',
+    desc: "Matningizni o'zbek, rus yoki ingliz tiliga sifatli tarjima qilib beramiz.",
+    icon: EMOJI.blueIcon,
+  },
+  {
+    id: 'rezyume',
+    name: 'Rezyume (CV) tayyorlash',
+    desc: 'Ish yoki grant uchun professional ko\'rinishdagi rezyume (CV) tayyorlab beramiz.',
+    icon: EMOJI.personIcon,
+  },
+  {
+    id: 'bot',
+    name: 'Telegram bot yaratish',
+    desc: 'Sizga kerakli funksiyalarga ega shaxsiy Telegram bot ishlab chiqamiz.',
+    icon: EMOJI.rocketIcon,
+  },
+];
+
+function getXizmat(id) {
+  return XIZMATLAR.find((x) => x.id === id) || null;
+}
+
+function getXizmatNarx(id) {
+  const v = XIZMAT_NARXLAR.get(id);
+  return v === undefined || v === null || v === '' ? null : Number(v);
+}
+
+// userId -> xizmat id (admin shu xizmat uchun narx kiritishini kutmoqda)
+const awaitingXizmatPrice = new Map();
+// userId -> buyurtma ID (to'lov qilingan, endi foydalanuvchidan vazifa
+// tafsilotlari — matn/fayl/rasm — kutilmoqda)
+const awaitingXizmatDetails = new Map();
+
+function xizmatlarMainScreen() {
+  const text =
+    `${emoji(EMOJI.moneyIcon, '🎓')} <b>Talaba xizmatlari</b>\n\n` +
+    `Bu yerda talabalar uchun eng ko'p kerak bo'ladigan xizmatlarni buyurtma qilishingiz mumkin. ` +
+    `Xizmatni tanlang, narxi bilan tanishing va to'lovni <b>Click</b> orqali amalga oshiring — ` +
+    `to'lov tasdiqlangach, jamoamiz tez orada siz bilan bog'lanadi.\n\n` +
+    `<i>Quyidagi xizmatlardan birini tanlang</i> ${emoji(EMOJI.pointDownIcon, '👇')}`;
+
+  const keyboard = XIZMATLAR.map((x) => {
+    const narx = getXizmatNarx(x.id);
+    const priceLabel = narx ? `${fmtSum(narx)} so'm` : "narx so'ralsin";
+    return [btn({ text: `${x.name} — ${priceLabel}`, callback_data: `xiz_${x.id}`, icon: x.icon, style: 'primary' })];
+  });
+  keyboard.push(backRow);
+
+  return { text, keyboard };
+}
+
+function xizmatDetailScreen(id, adminMode) {
+  const x = getXizmat(id);
+  if (!x) return null;
+  const narx = getXizmatNarx(id);
+
+  const text =
+    `${emoji(x.icon, '🛠')} <b>${x.name}</b>\n\n` +
+    `${x.desc}\n\n` +
+    (narx
+      ? `${emoji(EMOJI.moneyIcon, '💵')} <b>Narxi:</b> ${fmtSum(narx)} so'm`
+      : `${emoji(EMOJI.warningIcon, '⚠️')} <i>Narxi hali belgilanmagan. Aniq narx uchun admin bilan bog'laning.</i>`);
+
+  const keyboard = [];
+  if (narx) {
+    keyboard.push([btn({ text: `To'lash — ${fmtSum(narx)} so'm`, callback_data: `xizpay_${id}`, style: 'success', icon: EMOJI.checkIcon })]);
+  }
+  if (adminMode) {
+    keyboard.push([
+      btn({
+        text: narx ? "Narxni o'zgartirish" : 'Narxni belgilash',
+        callback_data: `xizadm_${id}`,
+        style: 'danger',
+        icon: EMOJI.writeIcon,
+      }),
+    ]);
+  }
+  keyboard.push([btn({ text: 'Orqaga', callback_data: 'menu_xizmatlar', icon: EMOJI.backIcon, style: 'danger' })]);
+
+  return { text, keyboard };
+}
+
+// ---------------------------------------------------------------------------
+// Click.uz — to'lov havolasi va Merchant API (Prepare/Complete) imzosi
+// ---------------------------------------------------------------------------
+function clickConfigured() {
+  return Boolean(CLICK_SERVICE_ID && CLICK_MERCHANT_ID && CLICK_SECRET_KEY);
+}
+
+function clickMd5(str) {
+  return crypto.createHash('md5').update(str).digest('hex');
+}
+
+// Foydalanuvchini Click to'lov sahifasiga yo'naltiradigan havola.
+// transaction_param — bizning ichki buyurtma ID'imiz (Click Prepare/Complete
+// so'rovlarida merchant_trans_id sifatida qaytadi).
+function buildClickPayUrl(order) {
+  const params = new URLSearchParams({
+    service_id: CLICK_SERVICE_ID,
+    merchant_id: CLICK_MERCHANT_ID,
+    amount: String(order.amount),
+    transaction_param: order.id,
+  });
+  if (WEBHOOK_URL) {
+    params.set('return_url', WEBHOOK_URL.replace(/\/$/, ''));
+  }
+  return `https://my.click.uz/services/pay?${params.toString()}`;
+}
+
+function createXizmatBuyurtma(userId, chatId, xizmat) {
+  // Vaqt tamg'asi + tasodifiy 3 xona — noyob va faqat raqamlardan iborat
+  // (Click merchant_prepare_id/merchant_confirm_id sifatida raqam talab qiladi)
+  const id = `${Date.now()}${Math.floor(100 + Math.random() * 900)}`;
+  const order = {
+    id,
+    userId: String(userId),
+    chatId: String(chatId),
+    serviceId: xizmat.id,
+    serviceName: xizmat.name,
+    amount: getXizmatNarx(xizmat.id),
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  };
+  XIZMAT_BUYURTMALAR.set(id, order);
+  saveXizmatBuyurtmalar();
+  return order;
+}
+
+// To'lov Click orqali muvaffaqiyatli tasdiqlanganda — foydalanuvchiga VA
+// adminga xabar beradi, so'ng foydalanuvchidan vazifa tafsilotlarini so'raydi
+async function notifyXizmatPaid(order) {
+  try {
+    await bot.sendMessage(
+      order.chatId,
+      `${emoji(EMOJI.checkIcon, '✅')} <b>To'lov muvaffaqiyatli qabul qilindi!</b>\n\n` +
+        `${emoji(EMOJI.moneyIcon, '🛠')} Xizmat: <b>${order.serviceName}</b>\n` +
+        `${emoji(EMOJI.moneyIcon, '💵')} Summa: <b>${fmtSum(order.amount)} so'm</b>\n` +
+        `${emoji(EMOJI.idIcon, '🆔')} Buyurtma: <code>${order.id}</code>\n\n` +
+        `Endi vazifangiz haqida batafsil ma'lumot (mavzu, talablar) va kerakli fayllarni shu yerga yuboring — ` +
+        `jamoamiz tez orada tayyor natijani shu chatga yuboradi.`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    console.error('[XIZMAT] Foydalanuvchiga to\'lov tasdig\'ini yuborishda xatolik:', err.message);
+  }
+
+  awaitingXizmatDetails.set(Number(order.userId) || order.userId, order.id);
+
+  if (ADMIN_CHAT_ID) {
+    try {
+      await bot.sendMessage(
+        ADMIN_CHAT_ID,
+        `${emoji(EMOJI.checkIcon, '💳')} <b>Yangi to'lov qabul qilindi!</b>\n\n` +
+          `🛠 Xizmat: <b>${order.serviceName}</b>\n` +
+          `💵 Summa: <b>${fmtSum(order.amount)} so'm</b>\n` +
+          `🔖 Buyurtma: <code>${order.id}</code>\n\n` +
+          `<i>Foydalanuvchi tez orada vazifa tafsilotlarini yuboradi — u kelgach, shu yerga forward qilinadi. ` +
+          `Tayyor natijani to'g'ridan-to'g'ri o'sha xabarga "Reply" qilib yuborishingiz mumkin.</i>\n` +
+          `🆔 ${order.chatId}`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('[XIZMAT] Adminga to\'lov xabarini yuborishda xatolik:', err.message);
+    }
+  }
+}
+
 const SCREENS = {
   menu_back: mainMenuScreen,
   menu_ball2026: ball2026MainScreen,
@@ -3606,6 +3898,7 @@ const SCREENS = {
   menu_189: ball189SubjectScreen,
   menu_statistika: statistikaSubjectScreen,
   menu_admin_advice: adminAdviceScreen,
+  menu_xizmatlar: xizmatlarMainScreen,
 };
 
 // ---------------------------------------------------------------------------
@@ -5066,6 +5359,113 @@ bot.on('message', async (msg) => {
     });
   } catch (err) {
     console.error("Yo'nalish qidiruv natijasini yuborishda xatolik:", err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// "Talaba xizmatlari" — admin bir xizmat uchun narx yozganda (faqat raqam)
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (!msg.text) return;
+
+  const userId = msg.from.id;
+  const xizId = awaitingXizmatPrice.get(userId);
+  if (!xizId) return;
+  if (!isAdmin(userId)) {
+    awaitingXizmatPrice.delete(userId);
+    return;
+  }
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  const x = getXizmat(xizId);
+  if (!x) {
+    awaitingXizmatPrice.delete(userId);
+    return;
+  }
+
+  const raw = msg.text.trim().replace(/\s+/g, '').replace(',', '.');
+  const narx = Math.round(parseFloat(raw));
+
+  if (!raw || isNaN(narx) || narx <= 0) {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "<tg-emoji emoji-id=\"5440660757194744323\">❗</tg-emoji>️ Iltimos, narxni musbat raqam ko'rinishida yuboring (masalan: <b>50000</b>).",
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('[XIZMAT] Narx validatsiya xabari xatosi:', err.message);
+    }
+    return; // holat saqlanadi — admin qayta urinishi mumkin
+  }
+
+  awaitingXizmatPrice.delete(userId);
+  XIZMAT_NARXLAR.set(xizId, narx);
+  saveXizmatNarxlar();
+
+  try {
+    await bot.sendMessage(
+      msg.chat.id,
+      `${emoji(EMOJI.checkIcon, '✅')} <b>${x.name}</b> narxi <b>${fmtSum(narx)} so'm</b> qilib belgilandi.`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[btn({ text: 'Xizmatni ko\'rish', callback_data: `xiz_${xizId}`, style: 'primary' })], backRow] } }
+    );
+  } catch (err) {
+    console.error('[XIZMAT] Narx tasdiq xabari xatosi:', err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// "Talaba xizmatlari" — to'lov qilingandan keyin, foydalanuvchi vazifa
+// tafsilotlarini (matn/fayl/rasm) yuborsa — to'g'ridan-to'g'ri adminga
+// forward qilinadi. Admin shu xabarga "Reply" qilib, tayyor natijani
+// yuqoridagi umumiy "Reply" handleri orqali qaytarib yuboradi.
+// ---------------------------------------------------------------------------
+bot.on('message', async (msg) => {
+  if (msg.web_app_data) return;
+  if (msg._relayedToUser) return;
+  if (msg._orderFlow) return;
+  if (msg.text && msg.text.startsWith('/')) return;
+
+  const userId = msg.from.id;
+  const orderId = awaitingXizmatDetails.get(userId);
+  if (!orderId) return;
+
+  const order = XIZMAT_BUYURTMALAR.get(orderId);
+  if (!order) {
+    awaitingXizmatDetails.delete(userId);
+    return;
+  }
+
+  msg._orderFlow = true; // AI handleri bu xabarga javob bermasligi uchun belgi
+
+  if (!ADMIN_CHAT_ID) return;
+
+  const from = msg.from;
+  const fromLabel = from.username ? `@${from.username}` : `${from.first_name || ''} (ID: ${from.id})`;
+  const header =
+    `${emoji(EMOJI.inboxIcon, '📥')} <b>Buyurtma bo'yicha ma'lumot</b>\n\n` +
+    `🛠 Xizmat: <b>${order.serviceName}</b>\n🔖 Buyurtma: <code>${order.id}</code>\n` +
+    `${emoji(EMOJI.personIcon, '👤')} ${fromLabel}\n\n` +
+    `<i>Tayyor natijani shu xabarga "Reply" qilib yuboring — foydalanuvchiga avtomatik yetkaziladi.</i>\n` +
+    `🆔 ${msg.chat.id}`;
+
+  try {
+    if (msg.text) {
+      await bot.sendMessage(ADMIN_CHAT_ID, `${header}\n\n✉️ ${escapeHtml(msg.text)}`, { parse_mode: 'HTML' });
+    } else {
+      await bot.sendMessage(ADMIN_CHAT_ID, header, { parse_mode: 'HTML' });
+      await bot.copyMessage(ADMIN_CHAT_ID, msg.chat.id, msg.message_id);
+    }
+    await bot.sendMessage(
+      msg.chat.id,
+      `${emoji(EMOJI.checkIcon, '✅')} Qabul qilindi, jamoamizga yetkazildi! Yana qo'shimcha ma'lumot/fayl yubormoqchi bo'lsangiz, bemalol yozavering.`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    console.error('[XIZMAT] Buyurtma tafsilotini adminga yuborishda xatolik:', err.message);
   }
 });
 
@@ -6710,6 +7110,127 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // "Talaba xizmatlari" — bitta xizmatning tafsilotlari (narxi va to'lov/narx
+  // belgilash tugmalari adminlik holatiga qarab farq qiladi, shuning uchun
+  // umumiy SCREENS ro'yxati o'rniga shu yerda alohida ishlanadi)
+  if (query.data && query.data.startsWith('xiz_')) {
+    const id = query.data.slice('xiz_'.length);
+    const rendered = xizmatDetailScreen(id, isAdmin(userId));
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!rendered) return;
+    await deleteMessageSafe(chatId, messageId);
+    await safeSend(chatId, rendered.text, rendered.keyboard);
+    return;
+  }
+
+  // "Talaba xizmatlari" — admin narx belgilash/o'zgartirish tugmasini bosdi
+  if (query.data && query.data.startsWith('xizadm_')) {
+    const id = query.data.slice('xizadm_'.length);
+    if (!isAdmin(userId)) {
+      try {
+        await bot.answerCallbackQuery(query.id, { text: "⛔️ Bu tugma faqat admin uchun.", show_alert: true });
+      } catch (err) {}
+      return;
+    }
+    const x = getXizmat(id);
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+    if (!x) return;
+    awaitingXizmatPrice.set(userId, id);
+    try {
+      await bot.sendMessage(
+        chatId,
+        `${emoji(EMOJI.writeIcon, '✍️')} <b>${x.name}</b> uchun yangi narxni faqat raqam bilan yuboring (masalan: <b>50000</b>):`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('[XIZMAT] Narx so\'rash xabari xatosi:', err.message);
+    }
+    return;
+  }
+
+  // "Talaba xizmatlari" — "To'lash" tugmasi: buyurtma yaratiladi va Click
+  // to'lov havolasi beriladi
+  if (query.data && query.data.startsWith('xizpay_')) {
+    const id = query.data.slice('xizpay_'.length);
+    const x = getXizmat(id);
+    const narx = getXizmatNarx(id);
+
+    if (isGroup) {
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: "To'lov qilish uchun botga shaxsiy xabar yozing.",
+          show_alert: true,
+        });
+      } catch (err) {}
+      return;
+    }
+    if (!x || !narx) {
+      try {
+        await bot.answerCallbackQuery(query.id, { text: "Bu xizmat uchun narx hali belgilanmagan.", show_alert: true });
+      } catch (err) {}
+      return;
+    }
+
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error('answerCallbackQuery xatosi:', err.message);
+    }
+
+    const order = createXizmatBuyurtma(userId, chatId, x);
+    await deleteMessageSafe(chatId, messageId);
+
+    if (!clickConfigured()) {
+      // Click sozlanmagan bo'lsa ham buyurtma diskda saqlanadi — admin bilan
+      // to'g'ridan-to'g'ri bog'lanib, to'lovni qo'lda tasdiqlash mumkin
+      if (ADMIN_CHAT_ID) {
+        try {
+          await bot.sendMessage(
+            ADMIN_CHAT_ID,
+            `${emoji(EMOJI.warningIcon, '⚠️')} <b>Yangi buyurtma (Click hali sozlanmagan)</b>\n\n` +
+              `🛠 Xizmat: <b>${order.serviceName}</b>\n💵 Summa: <b>${fmtSum(order.amount)} so'm</b>\n` +
+              `🔖 Buyurtma: <code>${order.id}</code>\n\n<i>Foydalanuvchi bilan to'g'ridan-to'g'ri bog'lanib, ` +
+              `to'lovni tashkil qiling.</i>\n🆔 ${chatId}`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          console.error('[XIZMAT] Admin xabari (Click sozlanmagan) xatosi:', err.message);
+        }
+      }
+      await safeSend(
+        chatId,
+        `${emoji(EMOJI.warningIcon, '⚠️')} Hozircha avtomatik to'lov vaqtincha ishlamayapti. ` +
+          `Buyurtmangiz (<code>${order.id}</code>) qabul qilindi — tez orada jamoamiz siz bilan bog'lanadi.`,
+        [backRow]
+      );
+      return;
+    }
+
+    const payUrl = buildClickPayUrl(order);
+    const keyboard = [
+      [btn({ text: `💳 Click orqali to'lash — ${fmtSum(order.amount)} so'm`, url: payUrl, style: 'success' })],
+      [btn({ text: 'Orqaga', callback_data: `xiz_${id}`, icon: EMOJI.backIcon, style: 'danger' })],
+    ];
+    await safeSend(
+      chatId,
+      `${emoji(EMOJI.moneyIcon, '💳')} <b>${x.name}</b>\n\n` +
+        `Summa: <b>${fmtSum(order.amount)} so'm</b>\n` +
+        `Buyurtma: <code>${order.id}</code>\n\n` +
+        `Quyidagi tugma orqali Click sahifasiga o'tib, to'lovni yakunlang. ` +
+        `To'lov muvaffaqiyatli o'tgach, bot avtomatik ravishda tasdiqlaydi va sizga xabar beradi.`,
+      keyboard
+    );
+    return;
+  }
+
   const screenFn = SCREENS[query.data];
   if (!screenFn) {
     try { await bot.answerCallbackQuery(query.id); } catch (err) { console.error('answerCallbackQuery xatosi:', err.message); }
@@ -6762,6 +7283,7 @@ bot.on('callback_query', async (query) => {
   pendingBahoSelection.delete(userId);
   awaitingMandatId.delete(userId);
   awaitingBuyurtmaId.delete(userId);
+  awaitingXizmatPrice.delete(userId);
   awaitingKQCustomSubject.delete(userId);
   pendingKQSubject.delete(userId);
   pendingKQFilters.delete(userId);
@@ -6902,6 +7424,7 @@ async function configureBot() {
 // ---------------------------------------------------------------------------
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Click.uz so'rovlari x-www-form-urlencoded formatida keladi
 
 // Bu route ikki maqsadda ishlatiladi: (1) brauzerda ochib ko'rish uchun,
 // (2) UptimeRobot/cron-job.org kabi tashqi xizmatlar bilan serverni "uxlab
@@ -6916,6 +7439,152 @@ app.get(['/', '/ping', '/health'], (req, res) => {
 app.post(`/bot${BOT_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
+});
+
+// ---------------------------------------------------------------------------
+// Click.uz Merchant API — "Prepare" va "Complete" so'rovlari.
+// Click Merchant Cabinet'da shu ikki manzilni ro'yxatdan o'tkazing:
+//   Prepare URL:  {WEBHOOK_URL}/click/prepare
+//   Complete URL: {WEBHOOK_URL}/click/complete
+// Click amount'ni odatda "50000.00" kabi kasr son ko'rinishida yuboradi,
+// shuning uchun solishtirishda kichik farqqa (0.01) yo'l qo'yamiz.
+// ---------------------------------------------------------------------------
+function clickAmountsMatch(a, b) {
+  return Math.abs(Number(a) - Number(b)) < 0.01;
+}
+
+app.post('/click/prepare', async (req, res) => {
+  try {
+    const {
+      click_trans_id,
+      service_id,
+      merchant_trans_id,
+      amount,
+      action,
+      sign_time,
+      sign_string,
+    } = req.body || {};
+
+    if (!CLICK_SECRET_KEY) {
+      return res.json({ error: -8, error_note: "Click sozlanmagan (CLICK_SECRET_KEY yo'q)" });
+    }
+
+    const expectedSign = clickMd5(
+      `${click_trans_id}${service_id}${CLICK_SECRET_KEY}${merchant_trans_id}${amount}${action}${sign_time}`
+    );
+    if (String(sign_string) !== expectedSign) {
+      return res.json({
+        click_trans_id,
+        merchant_trans_id,
+        error: -1,
+        error_note: 'SIGN CHECK FAILED!',
+      });
+    }
+
+    const order = XIZMAT_BUYURTMALAR.get(String(merchant_trans_id));
+    if (!order) {
+      return res.json({ click_trans_id, merchant_trans_id, error: -5, error_note: "Buyurtma topilmadi" });
+    }
+    if (order.status === 'paid') {
+      return res.json({ click_trans_id, merchant_trans_id, error: -4, error_note: "Buyurtma allaqachon to'langan" });
+    }
+    if (order.status === 'cancelled') {
+      return res.json({ click_trans_id, merchant_trans_id, error: -9, error_note: 'Buyurtma bekor qilingan' });
+    }
+    if (!clickAmountsMatch(amount, order.amount)) {
+      return res.json({ click_trans_id, merchant_trans_id, error: -2, error_note: "Noto'g'ri summa" });
+    }
+
+    order.clickTransId = click_trans_id;
+    saveXizmatBuyurtmalar();
+
+    return res.json({
+      click_trans_id,
+      merchant_trans_id,
+      merchant_prepare_id: Number(order.id),
+      error: 0,
+      error_note: 'Success',
+    });
+  } catch (err) {
+    console.error('[CLICK] /click/prepare xatosi:', err.message);
+    return res.json({ error: -8, error_note: 'Ichki xatolik' });
+  }
+});
+
+app.post('/click/complete', async (req, res) => {
+  try {
+    const {
+      click_trans_id,
+      service_id,
+      merchant_trans_id,
+      merchant_prepare_id,
+      amount,
+      action,
+      error,
+      sign_time,
+      sign_string,
+    } = req.body || {};
+
+    if (!CLICK_SECRET_KEY) {
+      return res.json({ error: -8, error_note: "Click sozlanmagan (CLICK_SECRET_KEY yo'q)" });
+    }
+
+    const expectedSign = clickMd5(
+      `${click_trans_id}${service_id}${CLICK_SECRET_KEY}${merchant_trans_id}${merchant_prepare_id}${amount}${action}${sign_time}`
+    );
+    if (String(sign_string) !== expectedSign) {
+      return res.json({
+        click_trans_id,
+        merchant_trans_id,
+        error: -1,
+        error_note: 'SIGN CHECK FAILED!',
+      });
+    }
+
+    const order = XIZMAT_BUYURTMALAR.get(String(merchant_trans_id));
+    if (!order) {
+      return res.json({ click_trans_id, merchant_trans_id, error: -5, error_note: "Buyurtma topilmadi" });
+    }
+
+    // Click to'lovni bekor qilgan/muvaffaqiyatsiz bo'lgan holat (error < 0)
+    if (Number(error) < 0) {
+      if (order.status !== 'paid') {
+        order.status = 'cancelled';
+        saveXizmatBuyurtmalar();
+      }
+      return res.json({
+        click_trans_id,
+        merchant_trans_id,
+        merchant_confirm_id: Number(order.id),
+        error: 0,
+        error_note: 'Success',
+      });
+    }
+
+    if (!clickAmountsMatch(amount, order.amount)) {
+      return res.json({ click_trans_id, merchant_trans_id, error: -2, error_note: "Noto'g'ri summa" });
+    }
+
+    // Bir xil to'lov uchun Click qayta so'rov yuborishi mumkin — shuning uchun
+    // faqat birinchi marta "paid" qilib, botda xabar yuboramiz
+    if (order.status !== 'paid') {
+      order.status = 'paid';
+      order.paidAt = new Date().toISOString();
+      saveXizmatBuyurtmalar();
+      notifyXizmatPaid(order).catch((err) => console.error('[CLICK] notifyXizmatPaid xatosi:', err.message));
+    }
+
+    return res.json({
+      click_trans_id,
+      merchant_trans_id,
+      merchant_confirm_id: Number(order.id),
+      error: 0,
+      error_note: 'Success',
+    });
+  } catch (err) {
+    console.error('[CLICK] /click/complete xatosi:', err.message);
+    return res.json({ error: -8, error_note: 'Ichki xatolik' });
+  }
 });
 
 app.listen(PORT, async () => {
